@@ -350,8 +350,12 @@ def _inspect_tokenizer(args: argparse.Namespace) -> int:
         global_prompt=global_prompt,
         local_prompts=local_prompts,
     )
+    token_weight_plan = tokenizer.tokenize_with_weights(plan.full_prompt)
     print(f"tokenizer_full_prompt_token_count={len(plan.input_ids)}")
+    print(f"tokenizer_padded_token_count={len(token_weight_plan.padded_input_ids)}")
+    print(f"tokenizer_attention_real_count={sum(token_weight_plan.attention_mask)}")
     print(f"tokenizer_local_prompt_count={len(plan.local_prompts)}")
     print(f"tokenizer_token_ranges={plan.token_ranges}")
     print(f"tokenizer_first_token_ids={plan.input_ids[:16]}")
+    print(f"tokenizer_first_padded_token_ids={token_weight_plan.padded_input_ids[:16]}")
     return 0

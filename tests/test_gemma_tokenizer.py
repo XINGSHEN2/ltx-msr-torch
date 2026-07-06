@@ -37,3 +37,34 @@ def test_gemma_tokenizer_tokenizes_project_sample_prompt():
 
     assert len(plan.input_ids) > 20
     assert len(plan.token_ranges) == 1
+
+
+def test_gemma_tokenizer_builds_comfy_style_token_weight_plan():
+    tokenizer = GemmaTokenizer.from_config_paths()
+    raw = tokenizer.encode("参考图1：红色水枪")
+    plan = tokenizer.tokenize_with_weights("参考图1：红色水枪")
+
+    assert len(plan.padded_input_ids) == 1024
+    assert len(plan.attention_mask) == 1024
+    assert plan.padded_input_ids[: 1024 - len(raw.input_ids)] == (0,) * (1024 - len(raw.input_ids))
+    assert plan.padded_input_ids[-len(raw.input_ids) :] == raw.input_ids
+    assert sum(plan.attention_mask) == len(raw.input_ids)
+    assert plan.comfy_tokens["gemma3_12b"][0][-len(raw.input_ids) :][0][0] == raw.input_ids[0]
+    assert {weight for _, weight in plan.comfy_tokens["gemma3_12b"][0]} == {1.0}
+
+
+def test_gemma_tokenizer_pads_project_sample_prompt_like_workflow():
+    global_prompt, local_prompts = parse_reference_prompt_file(
+        "/home/xingshen/yiwu/ltx-msr-torch/sample_cases/validition_v1_01/prompt.txt"
+    )
+    tokenizer = GemmaTokenizer.from_config_paths()
+    relay_plan = tokenizer.plan_prompt_relay_tokens(
+        global_prompt=global_prompt,
+        local_prompts=local_prompts,
+    )
+    token_plan = tokenizer.tokenize_with_weights(relay_plan.full_prompt)
+
+    assert len(relay_plan.input_ids) == len(token_plan.input_ids)
+    assert len(token_plan.padded_input_ids) == 1024
+    assert sum(token_plan.attention_mask) == len(token_plan.input_ids)
+    assert token_plan.padded_input_ids[-len(token_plan.input_ids) :] == token_plan.input_ids
