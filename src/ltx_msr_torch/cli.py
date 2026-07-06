@@ -9,6 +9,7 @@ from .comfy_client import load_api_prompt, queue_prompt, wait_for_history
 from .gemma_tokenizer import GemmaTokenizer
 from .gemma_text_model import inspect_gemma_text_model_compatibility, load_gemma3_text_config
 from .local_state import build_low_level_state
+from .ltxav_transformer import inspect_ltxav_transformer_manifest
 from .lora_apply import match_lora_targets
 from .lora_loader import inspect_lora_manifest, resolve_lora_path
 from .model_inspect import inspect_workflow_model_headers
@@ -130,6 +131,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Inspect local Transformers Gemma3 text model compatibility with workflow weights.",
     )
 
+    inspect_transformer = subparsers.add_parser(
+        "inspect-ltxav-transformer",
+        help="Inspect local LTXAV diffusion transformer config and key manifest.",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "build-reference":
         return _build_reference(args)
@@ -159,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_text_conditioning(args)
     if args.command == "inspect-gemma-text-model":
         return _inspect_gemma_text_model()
+    if args.command == "inspect-ltxav-transformer":
+        return _inspect_ltxav_transformer()
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -420,4 +428,27 @@ def _inspect_gemma_text_model() -> int:
     print(f"gemma_text_exact_key_match={compatibility.is_exact_match}")
     print(f"gemma_text_missing_hf_key_count={len(compatibility.missing_hf_keys)}")
     print(f"gemma_text_unexpected_checkpoint_key_count={len(compatibility.unexpected_checkpoint_keys)}")
+    return 0
+
+
+def _inspect_ltxav_transformer() -> int:
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    manifest = inspect_ltxav_transformer_manifest(state.model_paths.checkpoint)
+    config = manifest.config
+    print(f"ltxav_transformer_key_count={manifest.key_count}")
+    print(f"ltxav_transformer_block_count={manifest.block_count}")
+    print(f"ltxav_transformer_block_key_count={manifest.block_key_count}")
+    print(f"ltxav_transformer_keys_per_block={manifest.keys_per_block}")
+    print(f"ltxav_transformer_image_model={config.image_model}")
+    print(f"ltxav_transformer_in_channels={config.in_channels}")
+    print(f"ltxav_transformer_out_channels={config.out_channels}")
+    print(f"ltxav_transformer_cross_attention_dim={config.cross_attention_dim}")
+    print(f"ltxav_transformer_audio_cross_attention_dim={config.audio_cross_attention_dim}")
+    print(f"ltxav_transformer_attention_head_dim={config.attention_head_dim}")
+    print(f"ltxav_transformer_audio_attention_head_dim={config.audio_attention_head_dim}")
+    print(f"ltxav_transformer_connector_num_layers={config.connector_num_layers}")
+    print(f"ltxav_transformer_rope_type={config.rope_type}")
+    print(f"ltxav_transformer_frequencies_precision={config.frequencies_precision}")
+    print(f"ltxav_transformer_group_counts={manifest.group_counts}")
+    print(f"ltxav_transformer_specs={manifest.specs}")
     return 0
