@@ -9,6 +9,9 @@ ComfyUI node parameters needed for parity.
 ## Current Status
 
 - Implemented: `LiconMSR` reference-video construction.
+- Implemented: local PyTorch replacements for low-level workflow nodes:
+  `INTConstant`, `ManualSigmas`, `RandomNoise`, `EmptyLTXVLatentVideo`, and
+  `LTXVEmptyLatentAudio`.
 - Implemented: workflow parity config for the sampled ComfyUI graph.
 - Implemented: ComfyUI UI-workflow to API-prompt conversion for MSR case tests.
 - Pending: direct LTX 2.3 model load, PromptRelay conditioning, IC-LoRA guide,

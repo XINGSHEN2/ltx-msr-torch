@@ -53,12 +53,16 @@ PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch submit-a
 
 ## Stage 3: Replace Nodes With Local Code
 
+Status: started.
+
 Replace one node family at a time and compare intermediate outputs:
 
-1. Model path resolution and checkpoint loading.
-2. LoRA application.
-3. PromptRelay text conditioning.
-4. Empty video/audio latent creation.
+1. Local low-level nodes:
+   `INTConstant`, `ManualSigmas`, `RandomNoise`, `EmptyLTXVLatentVideo`, and
+   `LTXVEmptyLatentAudio`.
+2. Model path resolution and checkpoint loading.
+3. LoRA application.
+4. PromptRelay text conditioning.
 5. IC-LoRA guide encode and conditioning injection.
 6. NAG model patch.
 7. Euler sampler with manual sigmas.
