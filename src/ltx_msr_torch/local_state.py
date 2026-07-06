@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import torch
 
+from .iclora_guide import ICLoRAVideoGuidePlan, plan_iclora_video_guide
 from .lora_loader import LocalICLoRALoadResult, inspect_ic_lora_model_only
 from .model_paths import LocalModelPaths, resolve_workflow_model_paths
 from .torch_nodes import (
@@ -26,6 +27,7 @@ class LocalLowLevelState:
     sigmas: torch.Tensor
     noise: LocalRandomNoise
     ic_lora: LocalICLoRALoadResult
+    ic_lora_guide: ICLoRAVideoGuidePlan
     model_paths: LocalModelPaths
 
 
@@ -51,6 +53,16 @@ def build_low_level_state(
         config.model.lora,
         strength_model=config.model.lora_strength,
     )
+    ic_lora_guide = plan_iclora_video_guide(
+        latent_shape=video_latent["samples"].shape,
+        image_frame_count=config.reference.frame_count,
+        frame_idx=config.ic_lora_guide.frame_idx,
+        latent_downscale_factor=config.ic_lora_guide.latent_downscale_factor,
+        crop=config.ic_lora_guide.crop,
+        use_tiled_encode=config.ic_lora_guide.use_tiled_encode,
+        tile_size=config.ic_lora_guide.tile_size,
+        tile_overlap=config.ic_lora_guide.tile_overlap,
+    )
     model_paths = resolve_workflow_model_paths(config)
     return LocalLowLevelState(
         width=width,
@@ -61,5 +73,6 @@ def build_low_level_state(
         sigmas=sigmas,
         noise=noise,
         ic_lora=ic_lora,
+        ic_lora_guide=ic_lora_guide,
         model_paths=model_paths,
     )

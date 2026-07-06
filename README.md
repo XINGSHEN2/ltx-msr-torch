@@ -90,6 +90,9 @@ Inspect the local torch replacements and resolved workflow parameters:
 python -m ltx_msr_torch inspect-local-state
 ```
 
+This includes the IC-LoRA guide frame/index plan, target encode size, and
+estimated conditioning token count before the model-dependent VAE encode.
+
 Inspect safetensors headers without loading full model weights:
 
 ```bash

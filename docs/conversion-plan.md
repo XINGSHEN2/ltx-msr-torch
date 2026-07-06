@@ -66,13 +66,15 @@ Replace one node family at a time and compare intermediate outputs:
 4. Model path resolution for checkpoint, text encoder, LoRA, and audio VAE
    checkpoint files.
 5. Safetensors header inspection for checkpoint, text encoder, and LoRA.
-6. Checkpoint loading.
-7. LoRA weight application.
-8. PromptRelay text conditioning.
-9. IC-LoRA guide encode and conditioning injection.
-10. NAG model patch.
-11. Euler sampler with manual sigmas.
-12. VAE decode and video/audio mux.
+6. IC-LoRA guide shape planning, frame index resolution, causal fix, and
+   token-count parity before model-dependent VAE encoding.
+7. Checkpoint loading.
+8. LoRA weight application.
+9. PromptRelay text conditioning.
+10. IC-LoRA guide VAE encode and conditioning injection.
+11. NAG model patch.
+12. Euler sampler with manual sigmas.
+13. VAE decode and video/audio mux.
 
 ## Parity Rule
 
