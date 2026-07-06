@@ -99,6 +99,10 @@ Inspect safetensors headers without loading full model weights:
 python -m ltx_msr_torch inspect-model-headers
 ```
 
+PromptRelay's deterministic segment planning is available from
+`ltx_msr_torch.prompt_relay`; model patching and text encoder conditioning are
+kept as separate replacement steps.
+
 ## Parity Notes
 
 The source ComfyUI workflow uses:
