@@ -90,6 +90,12 @@ Inspect the local torch replacements and resolved workflow parameters:
 python -m ltx_msr_torch inspect-local-state
 ```
 
+Inspect safetensors headers without loading full model weights:
+
+```bash
+python -m ltx_msr_torch inspect-model-headers
+```
+
 ## Parity Notes
 
 The source ComfyUI workflow uses:

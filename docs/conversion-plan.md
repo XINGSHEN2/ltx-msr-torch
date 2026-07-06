@@ -65,13 +65,14 @@ Replace one node family at a time and compare intermediate outputs:
 3. `LTXVConditioning` conditioning metadata update.
 4. Model path resolution for checkpoint, text encoder, LoRA, and audio VAE
    checkpoint files.
-5. Checkpoint loading.
-6. LoRA weight application.
-7. PromptRelay text conditioning.
-8. IC-LoRA guide encode and conditioning injection.
-9. NAG model patch.
-10. Euler sampler with manual sigmas.
-11. VAE decode and video/audio mux.
+5. Safetensors header inspection for checkpoint, text encoder, and LoRA.
+6. Checkpoint loading.
+7. LoRA weight application.
+8. PromptRelay text conditioning.
+9. IC-LoRA guide encode and conditioning injection.
+10. NAG model patch.
+11. Euler sampler with manual sigmas.
+12. VAE decode and video/audio mux.
 
 ## Parity Rule
 

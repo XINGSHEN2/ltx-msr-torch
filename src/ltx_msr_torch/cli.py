@@ -6,6 +6,7 @@ from pathlib import Path
 from .comfy_api_prompt import build_case_api_prompt, save_api_prompt
 from .comfy_client import load_api_prompt, queue_prompt, wait_for_history
 from .local_state import build_low_level_state
+from .model_inspect import inspect_workflow_model_headers
 from .msr_reference import create_msr_reference_video_from_paths
 from .workflow_extract import extract_workflow_config
 from .workflow_config import default_workflow_config
@@ -68,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     inspect_local.add_argument("--device", default="cpu")
 
+    inspect_models = subparsers.add_parser(
+        "inspect-model-headers",
+        help="Inspect workflow safetensors headers without loading full weights.",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "build-reference":
         return _build_reference(args)
@@ -79,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
         return _submit_api_prompt(args)
     if args.command == "inspect-local-state":
         return _inspect_local_state(args)
+    if args.command == "inspect-model-headers":
+        return _inspect_model_headers()
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -161,4 +169,16 @@ def _inspect_local_state(args: argparse.Namespace) -> int:
     print(f"lora={state.model_paths.lora}")
     print(f"lora_strength={state.ic_lora.strength_model}")
     print(f"lora_reference_downscale_factor={state.ic_lora.latent_downscale_factor}")
+    return 0
+
+
+def _inspect_model_headers() -> int:
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    inspection = inspect_workflow_model_headers(state.model_paths)
+    for label in ("checkpoint", "text_encoder", "lora"):
+        item = getattr(inspection, label)
+        print(f"{label}_path={item.path}")
+        print(f"{label}_key_count={item.key_count}")
+        print(f"{label}_first_keys={list(item.first_keys)}")
+        print(f"{label}_metadata_keys={sorted((item.metadata or {}).keys())}")
     return 0
