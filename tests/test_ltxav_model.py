@@ -6,6 +6,7 @@ from ltx_msr_torch.ltxav_model import (
     LTXAVModelConfig,
     create_ltxav_model_from_checkpoint,
     load_ltxav_model_state_dict,
+    load_ltxav_model_weights_streaming,
     ltxav_model_config_from_manifest,
     ltxav_model_checkpoint_key,
     missing_ltxav_model_checkpoint_keys,
@@ -142,3 +143,71 @@ def test_load_ltxav_model_state_dict_maps_from_safetensors(tmp_path):
     assert set(loaded) == set(local_state)
     for index, key in enumerate(local_state):
         assert torch.equal(loaded[key], torch.full_like(local_state[key], index + 1, dtype=local_state[key].dtype))
+
+
+def test_load_ltxav_model_weights_streaming_copies_into_existing_model(tmp_path):
+    config = LTXAVModelConfig(
+        video_in_channels=2,
+        audio_in_channels=6,
+        video_dim=12,
+        audio_dim=4,
+        video_heads=2,
+        audio_heads=2,
+        video_dim_head=6,
+        audio_dim_head=2,
+        num_layers=1,
+        video_context_dim=12,
+        audio_context_dim=4,
+        video_out_channels=2,
+        audio_out_channels=6,
+        audio_channels=2,
+        audio_frequency=3,
+    )
+    model = LTXAVModel(config, dtype=torch.float32)
+    local_state = model.state_dict()
+    checkpoint_state = {
+        ltxav_model_checkpoint_key(key): torch.full_like(value, 0.25, dtype=value.dtype)
+        for key, value in local_state.items()
+    }
+    path = tmp_path / "small_ltxav_stream.safetensors"
+    save_file(checkpoint_state, path)
+
+    report = load_ltxav_model_weights_streaming(model, path)
+
+    assert report.loaded == len(local_state)
+    assert report.missing == ()
+    assert torch.allclose(model.input_projection.patchify_proj.weight, torch.full_like(model.input_projection.patchify_proj.weight, 0.25))
+
+
+def test_load_ltxav_model_weights_streaming_assigns_meta_model(tmp_path):
+    config = LTXAVModelConfig(
+        video_in_channels=2,
+        audio_in_channels=6,
+        video_dim=12,
+        audio_dim=4,
+        video_heads=2,
+        audio_heads=2,
+        video_dim_head=6,
+        audio_dim_head=2,
+        num_layers=1,
+        video_context_dim=12,
+        audio_context_dim=4,
+        video_out_channels=2,
+        audio_out_channels=6,
+        audio_channels=2,
+        audio_frequency=3,
+    )
+    model = LTXAVModel(config, dtype=torch.float32, device="meta")
+    local_state = model.state_dict()
+    checkpoint_state = {
+        ltxav_model_checkpoint_key(key): torch.full(value.shape, 0.5, dtype=value.dtype)
+        for key, value in local_state.items()
+    }
+    path = tmp_path / "small_ltxav_meta_stream.safetensors"
+    save_file(checkpoint_state, path)
+
+    report = load_ltxav_model_weights_streaming(model, path, assign=True)
+
+    assert report.loaded == len(local_state)
+    assert not model.input_projection.patchify_proj.weight.is_meta
+    assert torch.allclose(model.input_projection.patchify_proj.weight, torch.full_like(model.input_projection.patchify_proj.weight, 0.5))

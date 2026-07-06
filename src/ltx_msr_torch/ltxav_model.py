@@ -39,6 +39,13 @@ class LTXAVModelConfig:
     av_ca_timestep_scale_multiplier: float = 1.0
 
 
+@dataclass(frozen=True)
+class LTXAVModelLoadReport:
+    loaded: int
+    missing: tuple[str, ...]
+    unexpected: tuple[str, ...]
+
+
 def ltxav_model_config_from_manifest(manifest: LTXAVTransformerManifest) -> LTXAVModelConfig:
     config = manifest.config
     audio_in_channels = manifest.specs["model.diffusion_model.audio_patchify_proj.weight"].shape[1]
@@ -285,6 +292,66 @@ def missing_ltxav_model_checkpoint_keys(
     with safe_open(str(checkpoint_path), framework="pt", device="cpu") as handle:
         available = set(handle.keys())
     return tuple(key for key in checkpoint_keys if key not in available)
+
+
+def _resolve_state_target(model: torch.nn.Module, state_key: str) -> tuple[torch.nn.Module, str, torch.Tensor, bool]:
+    parent_name, _, tensor_name = state_key.rpartition(".")
+    parent = model.get_submodule(parent_name) if parent_name else model
+    if tensor_name in parent._parameters:
+        tensor = parent._parameters[tensor_name]
+        if tensor is None:
+            raise KeyError(f"parameter is None: {state_key}")
+        return parent, tensor_name, tensor, True
+    if tensor_name in parent._buffers:
+        tensor = parent._buffers[tensor_name]
+        if tensor is None:
+            raise KeyError(f"buffer is None: {state_key}")
+        return parent, tensor_name, tensor, False
+    raise KeyError(f"state key not found in module: {state_key}")
+
+
+def _assign_state_tensor(
+    model: torch.nn.Module,
+    state_key: str,
+    tensor: torch.Tensor,
+    *,
+    assign: bool,
+) -> None:
+    parent, tensor_name, target, is_parameter = _resolve_state_target(model, state_key)
+    if tuple(target.shape) != tuple(tensor.shape):
+        raise ValueError(f"shape mismatch for {state_key}: expected {tuple(target.shape)}, got {tuple(tensor.shape)}")
+    if assign or target.is_meta:
+        if is_parameter:
+            parent._parameters[tensor_name] = torch.nn.Parameter(tensor, requires_grad=target.requires_grad)
+        else:
+            parent._buffers[tensor_name] = tensor
+        return
+    with torch.no_grad():
+        target.copy_(tensor.to(device=target.device, dtype=target.dtype))
+
+
+def load_ltxav_model_weights_streaming(
+    model: LTXAVModel,
+    checkpoint_path: str | Path,
+    *,
+    device: str | torch.device = "cpu",
+    assign: bool = False,
+    strict: bool = True,
+) -> LTXAVModelLoadReport:
+    local_keys = tuple(model.state_dict().keys())
+    checkpoint_pairs = tuple((local_key, ltxav_model_checkpoint_key(local_key)) for local_key in local_keys)
+    with safe_open(str(checkpoint_path), framework="pt", device=str(device)) as handle:
+        available = set(handle.keys())
+        missing = tuple(checkpoint_key for _, checkpoint_key in checkpoint_pairs if checkpoint_key not in available)
+        if strict and missing:
+            raise KeyError(f"checkpoint keys not found: {missing[:8]}")
+        loaded = 0
+        for local_key, checkpoint_key in checkpoint_pairs:
+            if checkpoint_key not in available:
+                continue
+            _assign_state_tensor(model, local_key, handle.get_tensor(checkpoint_key), assign=assign)
+            loaded += 1
+    return LTXAVModelLoadReport(loaded=loaded, missing=missing, unexpected=())
 
 
 def load_ltxav_model_weights(
