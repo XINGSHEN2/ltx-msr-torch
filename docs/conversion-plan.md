@@ -78,13 +78,14 @@ Replace one node family at a time and compare intermediate outputs:
     dual video/audio projection.
 11. LTX2 NAG normalized attention guidance math and workflow patch target
     planning.
-12. Full checkpoint loading into torch modules.
-13. LoRA weight application to instantiated modules.
-14. PromptRelay text encoder conditioning and model patching.
-15. IC-LoRA guide VAE encode and conditioning injection.
-16. NAG model patch integration on instantiated modules.
-17. Euler sampler with manual sigmas.
-18. VAE decode and video/audio mux.
+12. Euler sampler step math and sampler plan for manual sigmas.
+13. Full checkpoint loading into torch modules.
+14. LoRA weight application to instantiated modules.
+15. PromptRelay text encoder conditioning and model patching.
+16. IC-LoRA guide VAE encode and conditioning injection.
+17. NAG model patch integration on instantiated modules.
+18. Euler sampler integration with instantiated diffusion model.
+19. VAE decode and video/audio mux.
 
 ## Parity Rule
 

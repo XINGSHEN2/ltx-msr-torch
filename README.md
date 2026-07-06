@@ -127,6 +127,9 @@ kept as separate replacement steps.
 LTX2 NAG guidance math is available from `ltx_msr_torch.nag`, including the
 normalized attention guidance formula and workflow patch target planning.
 
+Euler sampler utilities are available from `ltx_msr_torch.sampler`; model
+forward integration is intentionally separate from the deterministic step math.
+
 ## Parity Notes
 
 The source ComfyUI workflow uses:

@@ -9,6 +9,7 @@ from .iclora_guide import ICLoRAVideoGuidePlan, plan_iclora_video_guide
 from .lora_loader import LocalICLoRALoadResult, inspect_ic_lora_model_only
 from .model_paths import LocalModelPaths, resolve_workflow_model_paths
 from .nag import LTX2NAGPatchPlan, build_ltx2_nag_patch_plan
+from .sampler import SamplerPlan, build_sampler_plan
 from .torch_nodes import (
     LocalRandomNoise,
     empty_ltxv_latent_video,
@@ -31,6 +32,7 @@ class LocalLowLevelState:
     ic_lora: LocalICLoRALoadResult
     ic_lora_guide: ICLoRAVideoGuidePlan
     nag_patch: LTX2NAGPatchPlan
+    sampler: SamplerPlan
     model_paths: LocalModelPaths
 
 
@@ -77,6 +79,11 @@ def build_low_level_state(
         has_video_conditioning=True,
         has_audio_conditioning=False,
     )
+    sampler = build_sampler_plan(
+        sampler_name=config.sampling.sampler,
+        cfg=config.sampling.cfg,
+        sigmas=sigmas,
+    )
     return LocalLowLevelState(
         width=width,
         height=height,
@@ -88,5 +95,6 @@ def build_low_level_state(
         ic_lora=ic_lora,
         ic_lora_guide=ic_lora_guide,
         nag_patch=nag_patch,
+        sampler=sampler,
         model_paths=model_paths,
     )

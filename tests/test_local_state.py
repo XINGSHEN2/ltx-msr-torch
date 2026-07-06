@@ -19,6 +19,9 @@ def test_build_low_level_state_uses_workflow_parameters():
     assert state.nag_patch.transformer_block_count == 48
     assert len(state.nag_patch.video_patch_targets) == 48
     assert len(state.nag_patch.audio_patch_targets) == 0
+    assert state.sampler.sampler_name == "euler"
+    assert state.sampler.cfg == 1.0
+    assert state.sampler.step_count == 8
     assert state.ic_lora.lora_path.exists()
     assert state.model_paths.checkpoint.exists()
     assert state.model_paths.text_encoder.exists()
