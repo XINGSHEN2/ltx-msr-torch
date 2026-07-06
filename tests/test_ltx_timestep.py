@@ -5,6 +5,7 @@ import torch
 from ltx_msr_torch.ltx_timestep import (
     ADALN_CROSS_ATTN_PARAMS_COUNT,
     AdaLayerNormSingle,
+    CompressedTimestep,
     compute_prompt_timestep,
     get_timestep_embedding,
     load_adaln_single_state_dict,
@@ -42,6 +43,37 @@ def test_adaln_single_forward_shape_and_prompt_timestep():
     assert output.shape == (3, 12)
     assert embedded.shape == (3, 4)
     assert prompt.shape == (1, 1, 12)
+
+
+def test_compressed_timestep_keeps_one_row_per_frame_and_expands():
+    tensor = torch.arange(1 * 6 * 4, dtype=torch.float32).reshape(1, 6, 4)
+    compressed = CompressedTimestep(tensor, patches_per_frame=3)
+
+    assert compressed.data.shape == (1, 2, 4)
+    assert torch.equal(compressed.data, tensor.reshape(1, 2, 3, 4)[:, :, 0, :])
+
+    expanded = compressed.expand()
+
+    assert expanded.shape == tensor.shape
+    assert torch.equal(expanded.reshape(1, 2, 3, 4)[:, :, 0, :], compressed.data)
+    assert torch.equal(expanded.reshape(1, 2, 3, 4)[:, :, 1, :], compressed.data)
+
+
+def test_compressed_timestep_expand_for_computation_matches_full_repeated_timestep():
+    table = torch.randn(6, 4)
+    per_frame = torch.randn(1, 2, 6 * 4)
+    full = per_frame.unsqueeze(2).expand(1, 2, 3, 6 * 4).reshape(1, 6, 6 * 4)
+    compressed = CompressedTimestep(per_frame, patches_per_frame=3, per_frame=True)
+
+    local = compressed.expand_for_computation(table, batch_size=1, indices=slice(0, 3))
+    expected = (
+        table[None, None, :3]
+        + full.reshape(1, 6, 6, 4)[:, :, :3, :]
+    ).unbind(dim=2)
+
+    assert len(local) == len(expected)
+    for local_value, expected_value in zip(local, expected):
+        assert torch.allclose(local_value, expected_value)
 
 
 def test_adaln_single_matches_comfy_module_with_same_weights():

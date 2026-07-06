@@ -172,6 +172,75 @@ class AdaLayerNormSingle(torch.nn.Module):
         return self.linear(self.silu(embedded_timestep)), embedded_timestep
 
 
+class CompressedTimestep:
+    def __init__(self, tensor: torch.Tensor, patches_per_frame: int | None, *, per_frame: bool = False) -> None:
+        self.batch_size, n_tokens, self.feature_dim = tensor.shape
+        if per_frame:
+            self.patches_per_frame = patches_per_frame
+            self.num_frames = n_tokens
+            self.data = tensor
+        elif patches_per_frame is not None and n_tokens >= patches_per_frame and n_tokens % patches_per_frame == 0:
+            self.patches_per_frame = patches_per_frame
+            self.num_frames = n_tokens // patches_per_frame
+            self.data = tensor.view(self.batch_size, self.num_frames, patches_per_frame, self.feature_dim)[
+                :, :, 0, :
+            ].contiguous()
+        else:
+            self.patches_per_frame = 1
+            self.num_frames = n_tokens
+            self.data = tensor
+
+    @property
+    def device(self) -> torch.device:
+        return self.data.device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return self.data.dtype
+
+    def expand(self) -> torch.Tensor:
+        if self.patches_per_frame == 1:
+            return self.data
+        expanded = self.data.unsqueeze(2).expand(
+            self.batch_size,
+            self.num_frames,
+            self.patches_per_frame,
+            self.feature_dim,
+        )
+        return expanded.reshape(self.batch_size, -1, self.feature_dim)
+
+    def expand_for_computation(
+        self,
+        scale_shift_table: torch.Tensor,
+        batch_size: int,
+        indices: slice = slice(None, None),
+    ) -> tuple[torch.Tensor, ...]:
+        num_ada_params = scale_shift_table.shape[0]
+        if self.patches_per_frame == 1:
+            token_count = self.data.shape[1]
+            reshaped = self.data.reshape(batch_size, token_count, num_ada_params, -1)[:, :, indices, :]
+            table_values = scale_shift_table[indices].unsqueeze(0).unsqueeze(0).to(
+                device=self.data.device,
+                dtype=self.data.dtype,
+            )
+            return (table_values + reshaped).unbind(dim=2)
+
+        frame_values = self.data.reshape(batch_size, self.num_frames, num_ada_params, -1)[:, :, indices, :]
+        table_values = scale_shift_table[indices].unsqueeze(0).unsqueeze(0).to(
+            device=self.data.device,
+            dtype=self.data.dtype,
+        )
+        frame_ada = (table_values + frame_values).unbind(dim=2)
+        return tuple(
+            value.unsqueeze(2).expand(batch_size, self.num_frames, self.patches_per_frame, -1).reshape(
+                batch_size,
+                -1,
+                value.shape[-1],
+            )
+            for value in frame_ada
+        )
+
+
 def compute_prompt_timestep(
     adaln_module: AdaLayerNormSingle | None,
     timestep_scaled: torch.Tensor,

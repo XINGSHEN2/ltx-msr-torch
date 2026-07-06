@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import torch
 
 from .ltx_attention import CrossAttention, FeedForward, rms_norm
-from .ltx_timestep import ADALN_BASE_PARAMS_COUNT, ADALN_CROSS_ATTN_PARAMS_COUNT
+from .ltx_timestep import ADALN_BASE_PARAMS_COUNT, ADALN_CROSS_ATTN_PARAMS_COUNT, CompressedTimestep
 
 
 def apply_cross_attention_adaln(
@@ -243,9 +243,11 @@ class BasicAVTransformerBlock(torch.nn.Module):
     def get_ada_values(
         scale_shift_table: torch.Tensor,
         batch_size: int,
-        timestep: torch.Tensor,
+        timestep: torch.Tensor | CompressedTimestep,
         indices: slice = slice(None, None),
     ) -> tuple[torch.Tensor, ...]:
+        if isinstance(timestep, CompressedTimestep):
+            return timestep.expand_for_computation(scale_shift_table, batch_size, indices)
         num_ada_params = scale_shift_table.shape[0]
         values = (
             scale_shift_table[indices].unsqueeze(0).unsqueeze(0).to(device=timestep.device, dtype=timestep.dtype)

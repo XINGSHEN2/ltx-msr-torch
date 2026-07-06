@@ -3,7 +3,7 @@ import sys
 import torch
 
 from ltx_msr_torch.ltx_blocks import BasicAVTransformerBlock, BasicTransformerBlock, apply_cross_attention_adaln
-from ltx_msr_torch.ltx_timestep import ADALN_CROSS_ATTN_PARAMS_COUNT
+from ltx_msr_torch.ltx_timestep import ADALN_CROSS_ATTN_PARAMS_COUNT, CompressedTimestep
 
 
 def _enable_comfy_cpu_import():
@@ -160,6 +160,20 @@ def test_basic_av_transformer_block_weight_shapes_match_ltxav_block0():
     assert tuple(block.audio_to_video_attn.to_q.weight.shape) == (2048, 4096)
     assert tuple(block.audio_to_video_attn.to_out[0].weight.shape) == (4096, 2048)
     assert tuple(block.video_to_audio_attn.to_k.weight.shape) == (2048, 4096)
+
+
+def test_basic_av_transformer_block_ada_values_accept_compressed_timestep():
+    table = torch.randn(6, 4)
+    per_frame = torch.randn(1, 2, 6 * 4)
+    full = per_frame.unsqueeze(2).expand(1, 2, 3, 6 * 4).reshape(1, 6, 6 * 4)
+    compressed = CompressedTimestep(per_frame, patches_per_frame=3, per_frame=True)
+
+    local = BasicAVTransformerBlock.get_ada_values(table, 1, compressed, slice(1, 5))
+    expected = BasicAVTransformerBlock.get_ada_values(table, 1, full, slice(1, 5))
+
+    assert len(local) == len(expected)
+    for local_value, expected_value in zip(local, expected):
+        assert torch.allclose(local_value, expected_value)
 
 
 def test_basic_av_transformer_block_matches_comfy_without_av_cross_attention():
