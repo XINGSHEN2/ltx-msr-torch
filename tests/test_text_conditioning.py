@@ -1,10 +1,14 @@
 import torch
 
 from ltx_msr_torch.gemma_tokenizer import GemmaTokenizer
+from ltx_msr_torch.ltx_embeddings_connector import Embeddings1DConnector
 from ltx_msr_torch.text_conditioning import (
+    additive_to_binary_context_mask,
     attention_mask_tensor,
+    binary_to_additive_attention_mask,
     build_text_conditioning_inputs,
     build_text_conditioning_inputs_from_plan,
+    connect_ltxav_text_embeddings,
     encode_ltx_text_conditioning,
     estimate_gemma_memory_mb,
     trim_left_padding_from_layer_hidden,
@@ -66,3 +70,55 @@ def test_attention_mask_tensor_and_memory_estimate_match_workflow_floor():
     assert torch.equal(attention_mask_tensor(inputs), torch.tensor([[0, 0, 1, 1]], dtype=torch.long))
     assert estimate_gemma_memory_mb(pairs) == 642 * 6.0
     assert estimate_gemma_memory_mb(pairs, bf16=True) == 642 * 3.0
+
+
+def test_binary_to_additive_attention_mask_matches_comfy_shape():
+    mask = torch.tensor([[0, 1, 1]], dtype=torch.long)
+    additive = binary_to_additive_attention_mask(mask, dtype=torch.float32)
+
+    assert additive.shape == (1, 1, 1, 3)
+    assert additive[0, 0, 0, 0] < -1e30
+    assert additive[0, 0, 0, 1].item() == 0.0
+
+
+def test_additive_to_binary_context_mask_zeroes_padding():
+    encoded = torch.ones((1, 3, 2), dtype=torch.float32)
+    additive = torch.tensor([[[[-10000.0, 0.0, 0.0]]]])
+    masked, binary = additive_to_binary_context_mask(encoded, additive)
+
+    assert torch.equal(binary, torch.tensor([[1, 1, 1]]))
+    assert torch.equal(masked[0, 0], torch.ones(2))
+    assert torch.equal(masked[0, 1], torch.ones(2))
+
+
+def test_connect_ltxav_text_embeddings_concats_video_and_audio_connectors():
+    video_connector = Embeddings1DConnector(
+        attention_head_dim=2,
+        num_attention_heads=2,
+        num_layers=0,
+        num_learnable_registers=0,
+        dtype=torch.float32,
+    )
+    audio_connector = Embeddings1DConnector(
+        attention_head_dim=2,
+        num_attention_heads=2,
+        num_layers=0,
+        num_learnable_registers=0,
+        dtype=torch.float32,
+    )
+    conditioning = torch.randn((1, 3, 8), dtype=torch.float32)
+    mask = torch.tensor([[0, 1, 1]], dtype=torch.long)
+
+    output = connect_ltxav_text_embeddings(
+        conditioning,
+        attention_mask=mask,
+        video_connector=video_connector,
+        audio_connector=audio_connector,
+        video_dim=4,
+        audio_dim=4,
+    )
+
+    assert output.context.shape == (1, 3, 8)
+    assert output.video_context.shape == (1, 3, 4)
+    assert output.audio_context.shape == (1, 3, 4)
+    assert torch.equal(output.attention_mask, torch.ones_like(mask))

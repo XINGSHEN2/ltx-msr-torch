@@ -6,6 +6,7 @@ from typing import Sequence
 import torch
 
 from .gemma_tokenizer import GemmaTokenWeightPlan
+from .ltx_embeddings_connector import Embeddings1DConnector
 from .text_projection import DualLinearTextProjection
 
 
@@ -26,6 +27,14 @@ class LTXTextConditioningOutput:
     pooled: torch.Tensor | None
     attention_mask: torch.Tensor
     extra: dict[str, object]
+
+
+@dataclass(frozen=True)
+class LTXAVContextEmbeddings:
+    context: torch.Tensor
+    attention_mask: torch.Tensor
+    video_context: torch.Tensor
+    audio_context: torch.Tensor
 
 
 def build_text_conditioning_inputs(
@@ -95,6 +104,45 @@ def encode_ltx_text_conditioning(
         pooled=pooled,
         attention_mask=attention_mask.flatten().unsqueeze(dim=0),
         extra={"unprocessed_ltxav_embeds": True},
+    )
+
+
+def binary_to_additive_attention_mask(
+    attention_mask: torch.Tensor,
+    *,
+    dtype: torch.dtype | None = None,
+) -> torch.Tensor:
+    target_dtype = dtype or torch.float32
+    return (attention_mask.to(target_dtype) - 1).reshape(attention_mask.shape[0], 1, 1, attention_mask.shape[-1]) * torch.finfo(target_dtype).max
+
+
+def additive_to_binary_context_mask(encoded: torch.Tensor, encoded_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    binary_mask = (encoded_mask < 0.000001).to(torch.int64)
+    binary_mask = binary_mask.reshape(encoded.shape[0], encoded.shape[1], 1)
+    return encoded * binary_mask, binary_mask.squeeze(-1)
+
+
+def connect_ltxav_text_embeddings(
+    conditioning: torch.Tensor,
+    *,
+    attention_mask: torch.Tensor,
+    video_connector: Embeddings1DConnector,
+    audio_connector: Embeddings1DConnector,
+    video_dim: int = 4096,
+    audio_dim: int = 2048,
+) -> LTXAVContextEmbeddings:
+    if conditioning.shape[-1] != video_dim + audio_dim:
+        raise ValueError(f"expected conditioning dim {video_dim + audio_dim}, got {conditioning.shape[-1]}")
+    video_features, audio_features = torch.split(conditioning, [video_dim, audio_dim], dim=-1)
+    additive_mask = binary_to_additive_attention_mask(attention_mask, dtype=conditioning.dtype)
+    video_context, video_mask = video_connector(video_features, additive_mask)
+    video_context, binary_mask = additive_to_binary_context_mask(video_context, video_mask)
+    audio_context, _ = audio_connector(audio_features, additive_mask)
+    return LTXAVContextEmbeddings(
+        context=torch.cat([video_context, audio_context], dim=-1),
+        attention_mask=binary_mask,
+        video_context=video_context,
+        audio_context=audio_context,
     )
 
 
