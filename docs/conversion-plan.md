@@ -72,13 +72,15 @@ Replace one node family at a time and compare intermediate outputs:
    mapping, and relay segment math before model patching.
 8. LoRA tensor manifest parsing plus pure torch `B @ A` delta math and
    raw-checkpoint target matching before model-specific key-map application.
-9. Checkpoint loading.
-10. LoRA weight application.
-11. PromptRelay text encoder conditioning and model patching.
-12. IC-LoRA guide VAE encode and conditioning injection.
-13. NAG model patch.
-14. Euler sampler with manual sigmas.
-15. VAE decode and video/audio mux.
+9. Checkpoint raw safetensors section inspection, subset loading, and LoRA
+   target subset apply for memory-bounded parity validation.
+10. Full checkpoint loading into torch modules.
+11. LoRA weight application to instantiated modules.
+12. PromptRelay text encoder conditioning and model patching.
+13. IC-LoRA guide VAE encode and conditioning injection.
+14. NAG model patch.
+15. Euler sampler with manual sigmas.
+16. VAE decode and video/audio mux.
 
 ## Parity Rule
 

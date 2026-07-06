@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .checkpoint_loader import apply_lora_to_checkpoint_subset, inspect_checkpoint_manifest
 from .comfy_api_prompt import build_case_api_prompt, save_api_prompt
 from .comfy_client import load_api_prompt, queue_prompt, wait_for_history
 from .local_state import build_low_level_state
@@ -81,6 +82,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Inspect workflow LoRA A/B tensor pairs without applying weights.",
     )
 
+    inspect_checkpoint = subparsers.add_parser(
+        "inspect-checkpoint",
+        help="Inspect workflow checkpoint sections and key counts.",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "build-reference":
         return _build_reference(args)
@@ -96,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_model_headers()
     if args.command == "inspect-lora-manifest":
         return _inspect_lora_manifest()
+    if args.command == "inspect-checkpoint":
+        return _inspect_checkpoint()
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -220,9 +228,29 @@ def _inspect_lora_manifest() -> int:
     print(f"lora_ranks={ranks}")
     print(f"lora_unpaired_key_count={len(manifest.unpaired_keys)}")
     print(f"lora_metadata_keys={sorted((manifest.metadata or {}).keys())}")
+    apply_result = apply_lora_to_checkpoint_subset(
+        state.model_paths.checkpoint,
+        lora_path=path,
+        manifest=manifest,
+        strength=0.0,
+    )
+    print(f"lora_checkpoint_subset_apply_matched={apply_result.report_matched}")
+    print(f"lora_checkpoint_subset_apply_skipped={apply_result.report_skipped}")
     for index, pair in enumerate(manifest.pairs[:8]):
         print(
             f"pair_{index}={pair.target_key} "
             f"A={pair.lora_a_shape} B={pair.lora_b_shape} rank={pair.rank} alpha={pair.alpha}"
         )
+    return 0
+
+
+def _inspect_checkpoint() -> int:
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    manifest = inspect_checkpoint_manifest(state.model_paths.checkpoint)
+    print(f"checkpoint_path={manifest.path}")
+    print(f"checkpoint_key_count={manifest.key_count}")
+    for section in manifest.sections:
+        print(f"checkpoint_section_{section.name}_key_count={section.key_count}")
+        print(f"checkpoint_section_{section.name}_first_keys={list(section.first_keys)}")
+    print(f"checkpoint_unknown_key_count={len(manifest.unknown_keys)}")
     return 0

@@ -99,6 +99,12 @@ Inspect safetensors headers without loading full model weights:
 python -m ltx_msr_torch inspect-model-headers
 ```
 
+Inspect checkpoint section key counts:
+
+```bash
+python -m ltx_msr_torch inspect-checkpoint
+```
+
 Inspect the workflow LoRA tensor pair manifest:
 
 ```bash
