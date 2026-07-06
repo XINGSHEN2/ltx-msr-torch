@@ -76,13 +76,15 @@ Replace one node family at a time and compare intermediate outputs:
    target subset apply for memory-bounded parity validation.
 10. Text embedding projection module loading and forward logic for the LTXAV
     dual video/audio projection.
-11. Full checkpoint loading into torch modules.
-12. LoRA weight application to instantiated modules.
-13. PromptRelay text encoder conditioning and model patching.
-14. IC-LoRA guide VAE encode and conditioning injection.
-15. NAG model patch.
-16. Euler sampler with manual sigmas.
-17. VAE decode and video/audio mux.
+11. LTX2 NAG normalized attention guidance math and workflow patch target
+    planning.
+12. Full checkpoint loading into torch modules.
+13. LoRA weight application to instantiated modules.
+14. PromptRelay text encoder conditioning and model patching.
+15. IC-LoRA guide VAE encode and conditioning injection.
+16. NAG model patch integration on instantiated modules.
+17. Euler sampler with manual sigmas.
+18. VAE decode and video/audio mux.
 
 ## Parity Rule
 

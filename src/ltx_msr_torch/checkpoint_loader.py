@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Iterable
 
 import torch
@@ -64,6 +65,19 @@ def inspect_checkpoint_manifest(path: str | Path) -> CheckpointManifest:
         sections=tuple(sections),
         unknown_keys=tuple(key for key in keys if key not in known),
     )
+
+
+def infer_transformer_block_count(path: str | Path) -> int:
+    pattern = re.compile(r"(?:^|\.)transformer_blocks\.(\d+)\.")
+    with safe_open(str(path), framework="pt", device="cpu") as handle:
+        indices = {
+            int(match.group(1))
+            for key in handle.keys()
+            if (match := pattern.search(key)) is not None
+        }
+    if not indices:
+        return 0
+    return max(indices) + 1
 
 
 def load_safetensors_subset(

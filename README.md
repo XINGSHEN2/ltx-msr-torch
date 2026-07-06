@@ -124,6 +124,9 @@ PromptRelay's deterministic segment planning is available from
 `ltx_msr_torch.prompt_relay`; model patching and text encoder conditioning are
 kept as separate replacement steps.
 
+LTX2 NAG guidance math is available from `ltx_msr_torch.nag`, including the
+normalized attention guidance formula and workflow patch target planning.
+
 ## Parity Notes
 
 The source ComfyUI workflow uses:

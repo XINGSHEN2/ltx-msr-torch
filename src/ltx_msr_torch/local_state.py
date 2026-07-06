@@ -4,9 +4,11 @@ from dataclasses import dataclass
 
 import torch
 
+from .checkpoint_loader import infer_transformer_block_count
 from .iclora_guide import ICLoRAVideoGuidePlan, plan_iclora_video_guide
 from .lora_loader import LocalICLoRALoadResult, inspect_ic_lora_model_only
 from .model_paths import LocalModelPaths, resolve_workflow_model_paths
+from .nag import LTX2NAGPatchPlan, build_ltx2_nag_patch_plan
 from .torch_nodes import (
     LocalRandomNoise,
     empty_ltxv_latent_video,
@@ -28,6 +30,7 @@ class LocalLowLevelState:
     noise: LocalRandomNoise
     ic_lora: LocalICLoRALoadResult
     ic_lora_guide: ICLoRAVideoGuidePlan
+    nag_patch: LTX2NAGPatchPlan
     model_paths: LocalModelPaths
 
 
@@ -64,6 +67,16 @@ def build_low_level_state(
         tile_overlap=config.ic_lora_guide.tile_overlap,
     )
     model_paths = resolve_workflow_model_paths(config)
+    transformer_block_count = infer_transformer_block_count(model_paths.checkpoint)
+    nag_patch = build_ltx2_nag_patch_plan(
+        scale=config.nag.scale,
+        alpha=config.nag.alpha,
+        tau=config.nag.tau,
+        inplace=config.nag.inplace,
+        transformer_block_count=transformer_block_count,
+        has_video_conditioning=True,
+        has_audio_conditioning=False,
+    )
     return LocalLowLevelState(
         width=width,
         height=height,
@@ -74,5 +87,6 @@ def build_low_level_state(
         noise=noise,
         ic_lora=ic_lora,
         ic_lora_guide=ic_lora_guide,
+        nag_patch=nag_patch,
         model_paths=model_paths,
     )

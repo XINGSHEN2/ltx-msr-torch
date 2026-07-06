@@ -3,6 +3,7 @@ from safetensors.torch import save_file
 
 from ltx_msr_torch.checkpoint_loader import (
     apply_lora_to_checkpoint_subset,
+    infer_transformer_block_count,
     inspect_checkpoint_manifest,
     load_safetensors_subset,
     strip_prefix_from_state_dict,
@@ -41,6 +42,12 @@ def test_load_safetensors_subset_reads_only_requested_keys():
         "text_embedding_projection.video_aggregate_embed.bias",
     }
     assert all(isinstance(value, torch.Tensor) for value in state.values())
+
+
+def test_infer_transformer_block_count_matches_ltx23_checkpoint():
+    paths = resolve_workflow_model_paths(default_workflow_config())
+
+    assert infer_transformer_block_count(paths.checkpoint) == 48
 
 
 def test_strip_prefix_from_state_dict_removes_raw_checkpoint_model_prefix():

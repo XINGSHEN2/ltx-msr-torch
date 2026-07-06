@@ -13,6 +13,12 @@ def test_build_low_level_state_uses_workflow_parameters():
     assert tuple(state.sigmas.shape) == (9,)
     assert tuple(state.video_latent["samples"].shape) == (1, 128, 19, 60, 40)
     assert state.ic_lora.latent_downscale_factor == 1.0
+    assert state.nag_patch.config.scale == 11.0
+    assert state.nag_patch.config.alpha == 0.25
+    assert state.nag_patch.config.tau == 2.5
+    assert state.nag_patch.transformer_block_count == 48
+    assert len(state.nag_patch.video_patch_targets) == 48
+    assert len(state.nag_patch.audio_patch_targets) == 0
     assert state.ic_lora.lora_path.exists()
     assert state.model_paths.checkpoint.exists()
     assert state.model_paths.text_encoder.exists()
