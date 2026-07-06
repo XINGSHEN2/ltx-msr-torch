@@ -21,6 +21,28 @@ class LocalICLoRALoadResult:
     strength_model: float
 
 
+@dataclass(frozen=True)
+class LoRAPairManifest:
+    prefix: str
+    target_key: str
+    lora_a_key: str
+    lora_b_key: str
+    lora_a_shape: tuple[int, ...]
+    lora_b_shape: tuple[int, ...]
+    rank: int
+    alpha: float | None
+
+
+@dataclass(frozen=True)
+class LoRAManifest:
+    path: Path
+    metadata: dict[str, str] | None
+    key_count: int
+    pair_count: int
+    pairs: tuple[LoRAPairManifest, ...]
+    unpaired_keys: tuple[str, ...]
+
+
 def resolve_lora_path(
     lora_name: str,
     search_dirs: tuple[Path, ...] = DEFAULT_COMFYUI_LORA_DIRS,
@@ -52,6 +74,61 @@ def resolve_lora_path(
 def read_safetensors_metadata(path: str | Path) -> dict[str, str] | None:
     with safe_open(str(path), framework="pt", device="cpu") as handle:
         return handle.metadata()
+
+
+def inspect_lora_manifest(path: str | Path) -> LoRAManifest:
+    """Inspect LoRA tensor pairs without applying them to a model."""
+    resolved = Path(path)
+    with safe_open(str(resolved), framework="pt", device="cpu") as handle:
+        keys = list(handle.keys())
+        metadata = handle.metadata()
+        key_set = set(keys)
+        pairs: list[LoRAPairManifest] = []
+        loaded_pair_keys: set[str] = set()
+        for key in keys:
+            suffix = ".lora_A.weight"
+            if not key.endswith(suffix):
+                continue
+            prefix = key[: -len(suffix)]
+            b_key = f"{prefix}.lora_B.weight"
+            if b_key not in key_set:
+                continue
+            a_shape = tuple(handle.get_tensor(key).shape)
+            b_shape = tuple(handle.get_tensor(b_key).shape)
+            if len(a_shape) < 2 or len(b_shape) < 2:
+                raise ValueError(f"LoRA pair must have matrix-like tensors: {prefix}")
+            if a_shape[0] != b_shape[1]:
+                raise ValueError(
+                    f"LoRA rank mismatch for {prefix}: A{a_shape} cannot pair with B{b_shape}"
+                )
+            alpha_key = f"{prefix}.alpha"
+            alpha = None
+            if alpha_key in key_set:
+                alpha = float(handle.get_tensor(alpha_key).item())
+                loaded_pair_keys.add(alpha_key)
+            pairs.append(
+                LoRAPairManifest(
+                    prefix=prefix,
+                    target_key=f"{prefix}.weight",
+                    lora_a_key=key,
+                    lora_b_key=b_key,
+                    lora_a_shape=a_shape,
+                    lora_b_shape=b_shape,
+                    rank=int(a_shape[0]),
+                    alpha=alpha,
+                )
+            )
+            loaded_pair_keys.add(key)
+            loaded_pair_keys.add(b_key)
+
+    return LoRAManifest(
+        path=resolved,
+        metadata=metadata,
+        key_count=len(keys),
+        pair_count=len(pairs),
+        pairs=tuple(pairs),
+        unpaired_keys=tuple(key for key in keys if key not in loaded_pair_keys),
+    )
 
 
 def extract_reference_downscale_factor(

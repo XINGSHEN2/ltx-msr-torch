@@ -70,13 +70,15 @@ Replace one node family at a time and compare intermediate outputs:
    token-count parity before model-dependent VAE encoding.
 7. PromptRelay local prompt splitting, segment length distribution, token range
    mapping, and relay segment math before model patching.
-8. Checkpoint loading.
-9. LoRA weight application.
-10. PromptRelay text encoder conditioning and model patching.
-11. IC-LoRA guide VAE encode and conditioning injection.
-12. NAG model patch.
-13. Euler sampler with manual sigmas.
-14. VAE decode and video/audio mux.
+8. LoRA tensor manifest parsing plus pure torch `B @ A` delta math and
+   raw-checkpoint target matching before model-specific key-map application.
+9. Checkpoint loading.
+10. LoRA weight application.
+11. PromptRelay text encoder conditioning and model patching.
+12. IC-LoRA guide VAE encode and conditioning injection.
+13. NAG model patch.
+14. Euler sampler with manual sigmas.
+15. VAE decode and video/audio mux.
 
 ## Parity Rule
 

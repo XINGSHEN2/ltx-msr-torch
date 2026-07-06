@@ -3,6 +3,7 @@ from pathlib import Path
 from ltx_msr_torch.lora_loader import (
     extract_reference_downscale_factor,
     inspect_ic_lora_model_only,
+    inspect_lora_manifest,
     resolve_lora_path,
 )
 
@@ -34,6 +35,21 @@ def test_inspect_ic_lora_model_only_reads_metadata_without_loading_weights():
     assert result.strength_model == 1.0
     assert result.latent_downscale_factor == 1.0
     assert result.metadata is not None
+
+
+def test_inspect_lora_manifest_finds_all_ab_pairs():
+    path = resolve_lora_path("LTX-2.3\\LTX-2.3-Licon-MSR-V1.safetensors")
+    manifest = inspect_lora_manifest(path)
+
+    assert manifest.key_count == 960
+    assert manifest.pair_count == 480
+    assert manifest.unpaired_keys == ()
+    assert manifest.metadata is not None
+    assert manifest.metadata["reference_downscale_factor"] == "1"
+    first = manifest.pairs[0]
+    assert first.target_key.endswith(".weight")
+    assert first.rank == first.lora_a_shape[0] == first.lora_b_shape[1]
+    assert first.alpha is None
 
 
 def test_resolve_lora_path_raises_for_missing_lora(tmp_path: Path):

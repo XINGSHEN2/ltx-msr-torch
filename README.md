@@ -99,6 +99,15 @@ Inspect safetensors headers without loading full model weights:
 python -m ltx_msr_torch inspect-model-headers
 ```
 
+Inspect the workflow LoRA tensor pair manifest:
+
+```bash
+python -m ltx_msr_torch inspect-lora-manifest
+```
+
+The local LoRA utilities now also include the pure torch `B @ A` delta math and
+raw-checkpoint target matching used before applying weights.
+
 PromptRelay's deterministic segment planning is available from
 `ltx_msr_torch.prompt_relay`; model patching and text encoder conditioning are
 kept as separate replacement steps.

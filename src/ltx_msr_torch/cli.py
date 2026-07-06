@@ -6,6 +6,8 @@ from pathlib import Path
 from .comfy_api_prompt import build_case_api_prompt, save_api_prompt
 from .comfy_client import load_api_prompt, queue_prompt, wait_for_history
 from .local_state import build_low_level_state
+from .lora_apply import match_lora_targets
+from .lora_loader import inspect_lora_manifest, resolve_lora_path
 from .model_inspect import inspect_workflow_model_headers
 from .msr_reference import create_msr_reference_video_from_paths
 from .workflow_extract import extract_workflow_config
@@ -74,6 +76,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Inspect workflow safetensors headers without loading full weights.",
     )
 
+    inspect_lora = subparsers.add_parser(
+        "inspect-lora-manifest",
+        help="Inspect workflow LoRA A/B tensor pairs without applying weights.",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "build-reference":
         return _build_reference(args)
@@ -87,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_local_state(args)
     if args.command == "inspect-model-headers":
         return _inspect_model_headers()
+    if args.command == "inspect-lora-manifest":
+        return _inspect_lora_manifest()
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -189,4 +198,31 @@ def _inspect_model_headers() -> int:
         print(f"{label}_key_count={item.key_count}")
         print(f"{label}_first_keys={list(item.first_keys)}")
         print(f"{label}_metadata_keys={sorted((item.metadata or {}).keys())}")
+    return 0
+
+
+def _inspect_lora_manifest() -> int:
+    config = default_workflow_config()
+    state = build_low_level_state(config, device="cpu")
+    path = resolve_lora_path(config.model.lora)
+    manifest = inspect_lora_manifest(path)
+    from safetensors import safe_open
+
+    with safe_open(str(state.model_paths.checkpoint), framework="pt", device="cpu") as handle:
+        checkpoint_keys = set(handle.keys())
+    checkpoint_matches = match_lora_targets(checkpoint_keys, manifest)
+    checkpoint_match_count = sum(1 for match in checkpoint_matches if match.state_key is not None)
+    ranks = sorted({pair.rank for pair in manifest.pairs})
+    print(f"lora_path={manifest.path}")
+    print(f"lora_key_count={manifest.key_count}")
+    print(f"lora_pair_count={manifest.pair_count}")
+    print(f"lora_checkpoint_target_matches={checkpoint_match_count}")
+    print(f"lora_ranks={ranks}")
+    print(f"lora_unpaired_key_count={len(manifest.unpaired_keys)}")
+    print(f"lora_metadata_keys={sorted((manifest.metadata or {}).keys())}")
+    for index, pair in enumerate(manifest.pairs[:8]):
+        print(
+            f"pair_{index}={pair.target_key} "
+            f"A={pair.lora_a_shape} B={pair.lora_b_shape} rank={pair.rank} alpha={pair.alpha}"
+        )
     return 0
