@@ -172,7 +172,14 @@ def _is_link(value: Any) -> bool:
 
 
 def _comfy_input_relative(path: Path) -> str:
-    comfy_input = Path("/home/xingshen/ComfyUI/input").resolve()
+    comfy_input_literal = Path("/home/xingshen/ComfyUI/input")
+    absolute = path.absolute()
+    try:
+        return str(absolute.relative_to(comfy_input_literal))
+    except ValueError:
+        pass
+
+    comfy_input = comfy_input_literal.resolve()
     resolved = path.resolve()
     try:
         return str(resolved.relative_to(comfy_input))

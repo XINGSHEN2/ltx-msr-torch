@@ -48,10 +48,32 @@ Build a ComfyUI API prompt for a downloaded MSR validation case:
 
 ```bash
 python -m ltx_msr_torch build-api-prompt \
-  --case-dir /mnt/AINAS0/user/xingshen/LTX-2.3-Multiple-Subject-Reference/examples-hf/validition_v1/01 \
+  --case-dir sample_cases/validition_v1_01 \
   --output outputs/validition_v1_01_api_prompt.json \
   --output-prefix LTX-2/MSR_torch_parity_01
 ```
+
+The project includes this small input case under
+`sample_cases/validition_v1_01`.
+
+To submit that project-local sample to ComfyUI, expose the project under the
+ComfyUI input folder first:
+
+```bash
+ln -sfn /home/xingshen/yiwu/ltx-msr-torch /home/xingshen/ComfyUI/input/ltx-msr-torch
+
+python -m ltx_msr_torch build-api-prompt \
+  --case-dir /home/xingshen/ComfyUI/input/ltx-msr-torch/sample_cases/validition_v1_01 \
+  --output outputs/project_sample_validition_v1_01_api_prompt.json \
+  --output-prefix LTX-2/MSR_project_sample_01
+
+python -m ltx_msr_torch submit-api-prompt \
+  --prompt outputs/project_sample_validition_v1_01_api_prompt.json \
+  --server 127.0.0.1:8188 \
+  --wait
+```
+
+The local ComfyUI client bypasses environment HTTP proxies for `127.0.0.1`.
 
 ## Parity Notes
 
