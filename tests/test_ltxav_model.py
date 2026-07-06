@@ -4,6 +4,7 @@ from safetensors.torch import save_file
 from ltx_msr_torch.ltxav_model import (
     LTXAVModel,
     LTXAVModelConfig,
+    create_ltxav_model_from_checkpoint,
     load_ltxav_model_state_dict,
     ltxav_model_config_from_manifest,
     ltxav_model_checkpoint_key,
@@ -70,6 +71,18 @@ def test_ltxav_model_config_from_workflow_manifest():
     assert config.audio_context_dim == 2048
     assert config.video_out_channels == 128
     assert config.audio_out_channels == 128
+
+
+def test_create_ltxav_model_from_checkpoint_on_meta_device():
+    paths = resolve_workflow_model_paths(default_workflow_config())
+
+    model = create_ltxav_model_from_checkpoint(paths.checkpoint, device="meta")
+
+    assert model.config.num_layers == 48
+    assert len(model.transformer_blocks) == 48
+    assert tuple(model.input_projection.patchify_proj.weight.shape) == (4096, 128)
+    assert tuple(model.transformer_blocks[0].audio_attn1.to_q.weight.shape) == (2048, 2048)
+    assert tuple(model.output_processor.audio_proj_out.weight.shape) == (128, 2048)
 
 
 def test_ltxav_model_checkpoint_key_maps_wrapped_modules():

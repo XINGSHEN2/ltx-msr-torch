@@ -12,7 +12,7 @@ from .ltxav_io import LTXAVInputProjection
 from .ltxav_output import LTXAVOutputProcessor
 from .ltxav_prepare import prepare_ltxav_block_inputs
 from .ltxav_timestep import prepare_ltxav_timesteps
-from .ltxav_transformer import LTXAVTransformerManifest
+from .ltxav_transformer import LTXAVTransformerManifest, inspect_ltxav_transformer_manifest
 
 
 @dataclass(frozen=True)
@@ -59,6 +59,16 @@ def ltxav_model_config_from_manifest(manifest: LTXAVTransformerManifest) -> LTXA
         cross_attention_adaln=config.cross_attention_adaln,
         apply_gated_attention=config.apply_gated_attention,
     )
+
+
+def create_ltxav_model_from_checkpoint(
+    checkpoint_path: str | Path,
+    *,
+    dtype: torch.dtype | None = None,
+    device: torch.device | str | None = "meta",
+) -> LTXAVModel:
+    manifest = inspect_ltxav_transformer_manifest(checkpoint_path)
+    return LTXAVModel(ltxav_model_config_from_manifest(manifest), dtype=dtype, device=device)
 
 
 class LTXAVModel(torch.nn.Module):
