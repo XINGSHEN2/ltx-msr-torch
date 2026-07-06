@@ -4,7 +4,7 @@ import json
 import time
 from pathlib import Path
 from typing import Any
-from urllib import request
+from urllib import error, request
 
 
 def queue_prompt(
@@ -17,13 +17,12 @@ def queue_prompt(
         data=payload,
         headers={"Content-Type": "application/json"},
     )
-    with request.urlopen(req, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+    return _open_json(req, timeout=30)
 
 
 def get_history(prompt_id: str, server: str = "127.0.0.1:8188") -> dict[str, Any]:
-    with request.urlopen(f"http://{server}/history/{prompt_id}", timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+    req = request.Request(f"http://{server}/history/{prompt_id}")
+    return _open_json(req, timeout=30)
 
 
 def wait_for_history(
@@ -45,3 +44,12 @@ def wait_for_history(
 def load_api_prompt(path: str | Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text())
 
+
+def _open_json(req: request.Request, timeout: int) -> dict[str, Any]:
+    opener = request.build_opener(request.ProxyHandler({}))
+    try:
+        with opener.open(req, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"ComfyUI HTTP {exc.code}: {body}") from exc

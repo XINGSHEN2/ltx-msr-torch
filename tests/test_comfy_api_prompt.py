@@ -25,4 +25,7 @@ def test_build_case_api_prompt_injects_case_01_inputs():
     assert prompt["20"]["inputs"]["filename_prefix"] == "LTX-2/test"
     assert "参考图1" in prompt["99"]["inputs"]["global_prompt"]
     assert "石板小路" in prompt["99"]["inputs"]["local_prompts"]
-
+    assert "33" not in prompt
+    assert "95" not in prompt
+    assert "104" not in prompt
+    assert "105" not in prompt

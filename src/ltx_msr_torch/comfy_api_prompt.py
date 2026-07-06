@@ -20,6 +20,7 @@ WIDGET_INPUT_NAMES: dict[str, tuple[str, ...]] = {
     "EmptyLTXVLatentVideo": ("width", "height", "length", "batch_size"),
     "LTXVEmptyLatentAudio": ("frames_number", "frame_rate", "batch_size"),
     "CLIPTextEncode": ("text",),
+    "LTXVConditioning": ("frame_rate",),
     "LiconMSR": ("width", "height", "frame_count"),
     "LTXICLoRALoaderModelOnly": ("lora_name", "strength_model"),
     "PromptRelayEncode": (
@@ -94,7 +95,7 @@ def build_case_api_prompt(
     api_prompt["99"]["inputs"]["global_prompt"] = global_prompt
     api_prompt["99"]["inputs"]["local_prompts"] = local_prompts
     api_prompt["20"]["inputs"]["filename_prefix"] = output_prefix
-    return api_prompt
+    return _prune_to_outputs(api_prompt, output_node_ids=["20"])
 
 
 def save_api_prompt(prompt: dict[str, Any], path: str | Path) -> None:
@@ -138,6 +139,36 @@ def _link_sources(links: list[list[Any]]) -> dict[int, tuple[str, int]]:
 
 def _set_load_image(api_prompt: dict[str, Any], node_id: str, filename: str) -> None:
     api_prompt[node_id]["inputs"]["image"] = filename
+
+
+def _prune_to_outputs(
+    api_prompt: dict[str, Any],
+    output_node_ids: list[str],
+) -> dict[str, Any]:
+    reachable: set[str] = set()
+    stack = list(output_node_ids)
+    while stack:
+        node_id = stack.pop()
+        if node_id in reachable or node_id not in api_prompt:
+            continue
+        reachable.add(node_id)
+        for value in api_prompt[node_id].get("inputs", {}).values():
+            if _is_link(value):
+                stack.append(value[0])
+    return {
+        node_id: node
+        for node_id, node in api_prompt.items()
+        if node_id in reachable
+    }
+
+
+def _is_link(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) == 2
+        and isinstance(value[0], str)
+        and isinstance(value[1], int)
+    )
 
 
 def _comfy_input_relative(path: Path) -> str:
