@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 
+from .checkpoint_loader import load_safetensors_subset
 from .ltx_blocks import BasicAVTransformerBlock
 from .ltx_timestep import ADALN_CROSS_ATTN_PARAMS_COUNT, AdaLayerNormSingle
 from .ltxav_io import LTXAVInputProjection
@@ -210,3 +212,42 @@ class LTXAVModel(torch.nn.Module):
             audio_channels=config.audio_channels,
             audio_frequency=config.audio_frequency,
         )
+
+
+def ltxav_model_checkpoint_key(model_state_key: str) -> str:
+    prefixes = {
+        "input_projection.": "",
+        "output_processor.": "",
+        "video_adaln_single.": "adaln_single.",
+        "video_prompt_adaln_single.": "prompt_adaln_single.",
+    }
+    for local_prefix, checkpoint_prefix in prefixes.items():
+        if model_state_key.startswith(local_prefix):
+            return f"model.diffusion_model.{checkpoint_prefix}{model_state_key[len(local_prefix):]}"
+    return f"model.diffusion_model.{model_state_key}"
+
+
+def load_ltxav_model_state_dict(
+    model: LTXAVModel,
+    checkpoint_path: str | Path,
+    *,
+    device: str | torch.device = "cpu",
+) -> dict[str, torch.Tensor]:
+    local_keys = tuple(model.state_dict().keys())
+    checkpoint_keys = tuple(ltxav_model_checkpoint_key(key) for key in local_keys)
+    raw = load_safetensors_subset(checkpoint_path, checkpoint_keys, device=device)
+    return {
+        local_key: raw[checkpoint_key]
+        for local_key, checkpoint_key in zip(local_keys, checkpoint_keys)
+    }
+
+
+def load_ltxav_model_weights(
+    model: LTXAVModel,
+    checkpoint_path: str | Path,
+    *,
+    strict: bool = True,
+    device: str | torch.device = "cpu",
+) -> torch.nn.modules.module._IncompatibleKeys:
+    state_dict = load_ltxav_model_state_dict(model, checkpoint_path, device=device)
+    return model.load_state_dict(state_dict, strict=strict)
