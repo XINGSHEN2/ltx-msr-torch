@@ -111,6 +111,12 @@ Inspect the loaded text embedding projection module:
 python -m ltx_msr_torch inspect-text-projection
 ```
 
+Inspect video/audio VAE checkpoint sections:
+
+```bash
+python -m ltx_msr_torch inspect-vae-sections
+```
+
 Inspect the workflow LoRA tensor pair manifest:
 
 ```bash

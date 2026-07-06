@@ -12,6 +12,7 @@ from .lora_loader import inspect_lora_manifest, resolve_lora_path
 from .model_inspect import inspect_workflow_model_headers
 from .msr_reference import create_msr_reference_video_from_paths
 from .text_projection import build_text_projection_from_checkpoint
+from .vae_sections import inspect_vae_section
 from .workflow_extract import extract_workflow_config
 from .workflow_config import default_workflow_config
 
@@ -93,6 +94,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Load and inspect the workflow text embedding projection module.",
     )
 
+    inspect_vae = subparsers.add_parser(
+        "inspect-vae-sections",
+        help="Inspect video/audio VAE checkpoint sections.",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "build-reference":
         return _build_reference(args)
@@ -112,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_checkpoint()
     if args.command == "inspect-text-projection":
         return _inspect_text_projection()
+    if args.command == "inspect-vae-sections":
+        return _inspect_vae_sections()
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -287,4 +295,16 @@ def _inspect_text_projection() -> int:
     print(f"text_projection_dtype={config.dtype}")
     print(f"text_projection_video_weight_shape={tuple(module.video_aggregate_embed.weight.shape)}")
     print(f"text_projection_audio_weight_shape={tuple(module.audio_aggregate_embed.weight.shape)}")
+    return 0
+
+
+def _inspect_vae_sections() -> int:
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    for prefix in ("vae", "audio_vae"):
+        manifest = inspect_vae_section(state.model_paths.checkpoint, prefix=prefix)
+        print(f"{prefix}_key_count={manifest.key_count}")
+        print(f"{prefix}_encoder_key_count={manifest.encoder_key_count}")
+        print(f"{prefix}_decoder_key_count={manifest.decoder_key_count}")
+        print(f"{prefix}_statistics_key_count={manifest.statistics_key_count}")
+        print(f"{prefix}_first_shapes={manifest.first_shapes}")
     return 0
