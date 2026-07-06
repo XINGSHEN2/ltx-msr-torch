@@ -9,6 +9,7 @@ from .comfy_client import load_api_prompt, queue_prompt, wait_for_history
 from .gemma_tokenizer import GemmaTokenizer
 from .gemma_text_model import inspect_gemma_text_model_compatibility, load_gemma3_text_config
 from .local_state import build_low_level_state
+from .ltxav_model import create_ltxav_model_from_checkpoint, missing_ltxav_model_checkpoint_keys
 from .ltxav_transformer import inspect_ltxav_transformer_manifest
 from .lora_apply import match_lora_targets
 from .lora_loader import inspect_lora_manifest, resolve_lora_path
@@ -135,6 +136,10 @@ def main(argv: list[str] | None = None) -> int:
         "inspect-ltxav-transformer",
         help="Inspect local LTXAV diffusion transformer config and key manifest.",
     )
+    inspect_ltxav_model = subparsers.add_parser(
+        "inspect-ltxav-model",
+        help="Build the local torch LTXAV model on meta and verify checkpoint key coverage.",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "build-reference":
@@ -167,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_gemma_text_model()
     if args.command == "inspect-ltxav-transformer":
         return _inspect_ltxav_transformer()
+    if args.command == "inspect-ltxav-model":
+        return _inspect_ltxav_model()
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -451,4 +458,21 @@ def _inspect_ltxav_transformer() -> int:
     print(f"ltxav_transformer_frequencies_precision={config.frequencies_precision}")
     print(f"ltxav_transformer_group_counts={manifest.group_counts}")
     print(f"ltxav_transformer_specs={manifest.specs}")
+    return 0
+
+
+def _inspect_ltxav_model() -> int:
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    model = create_ltxav_model_from_checkpoint(state.model_paths.checkpoint, device="meta")
+    missing = missing_ltxav_model_checkpoint_keys(model, state.model_paths.checkpoint)
+    config = model.config
+    print(f"ltxav_model_checkpoint={state.model_paths.checkpoint}")
+    print(f"ltxav_model_num_layers={config.num_layers}")
+    print(f"ltxav_model_video_dim={config.video_dim}")
+    print(f"ltxav_model_audio_dim={config.audio_dim}")
+    print(f"ltxav_model_state_key_count={len(model.state_dict())}")
+    print(f"ltxav_model_missing_checkpoint_key_count={len(missing)}")
+    if missing:
+        print(f"ltxav_model_missing_checkpoint_keys={list(missing[:8])}")
+    print(f"ltxav_model_first_weight_is_meta={model.input_projection.patchify_proj.weight.is_meta}")
     return 0
