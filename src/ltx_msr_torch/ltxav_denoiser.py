@@ -5,6 +5,8 @@ from typing import Protocol
 
 import torch
 
+from .sampler import sample_euler_latents
+
 
 class LTXAVModelProtocol(Protocol):
     def __call__(
@@ -74,3 +76,32 @@ def _audio_token_count(audio_latents: torch.Tensor) -> int:
     if audio_latents.ndim != 4:
         raise ValueError(f"expected audio latents [B,C,T,F], got {tuple(audio_latents.shape)}")
     return int(audio_latents.shape[2])
+
+
+@torch.no_grad()
+def sample_ltxav_euler(
+    *,
+    model: LTXAVModelProtocol,
+    video_latents: torch.Tensor,
+    audio_latents: torch.Tensor,
+    context: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    frame_rate: float,
+    sigmas: torch.Tensor,
+    transformer_options: dict[str, object] | None = None,
+    self_attention_mask: torch.Tensor | None = None,
+    ref_audio_seq_len: int = 0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    denoiser = LTXAVDenoiser(
+        model=model,
+        context=context,
+        attention_mask=attention_mask,
+        frame_rate=frame_rate,
+        transformer_options=transformer_options,
+        self_attention_mask=self_attention_mask,
+        ref_audio_seq_len=ref_audio_seq_len,
+    )
+    sampled = sample_euler_latents(denoiser, (video_latents, audio_latents), sigmas)
+    if not isinstance(sampled, tuple):
+        raise TypeError("sample_ltxav_euler expected tuple latents")
+    return sampled

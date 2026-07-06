@@ -1,6 +1,6 @@
 import torch
 
-from ltx_msr_torch.ltxav_denoiser import LTXAVDenoiser
+from ltx_msr_torch.ltxav_denoiser import LTXAVDenoiser, sample_ltxav_euler
 
 
 class _FakeLTXAVModel:
@@ -46,3 +46,24 @@ def test_ltxav_denoiser_supports_scalar_sigma():
     assert call["timestep"].shape == (2, 1)
     assert call["audio_timestep"].shape == (2, 3)
     assert torch.equal(call["timestep"], torch.full((2, 1), 0.4))
+
+
+def test_sample_ltxav_euler_runs_adapter_and_tuple_sampler():
+    model = _FakeLTXAVModel()
+    video = torch.ones(1, 2, 1, 1, 1) * 4
+    audio = torch.ones(1, 2, 1, 1) * 8
+
+    out = sample_ltxav_euler(
+        model=model,
+        video_latents=video,
+        audio_latents=audio,
+        context=torch.randn(1, 5, 16),
+        attention_mask=None,
+        frame_rate=25.0,
+        sigmas=torch.tensor([2.0, 1.0, 0.0]),
+    )
+
+    assert isinstance(out, tuple)
+    assert torch.allclose(out[0], torch.ones_like(video) * 1.5)
+    assert torch.allclose(out[1], torch.ones_like(audio) * 1.25)
+    assert len(model.calls) == 2
