@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
+from safetensors import safe_open
 
 from .checkpoint_loader import load_safetensors_subset
 from .ltx_blocks import BasicAVTransformerBlock
@@ -274,6 +275,16 @@ def load_ltxav_model_state_dict(
         local_key: raw[checkpoint_key]
         for local_key, checkpoint_key in zip(local_keys, checkpoint_keys)
     }
+
+
+def missing_ltxav_model_checkpoint_keys(
+    model: LTXAVModel,
+    checkpoint_path: str | Path,
+) -> tuple[str, ...]:
+    checkpoint_keys = tuple(ltxav_model_checkpoint_key(key) for key in model.state_dict())
+    with safe_open(str(checkpoint_path), framework="pt", device="cpu") as handle:
+        available = set(handle.keys())
+    return tuple(key for key in checkpoint_keys if key not in available)
 
 
 def load_ltxav_model_weights(

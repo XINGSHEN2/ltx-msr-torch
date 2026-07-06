@@ -8,6 +8,7 @@ from ltx_msr_torch.ltxav_model import (
     load_ltxav_model_state_dict,
     ltxav_model_config_from_manifest,
     ltxav_model_checkpoint_key,
+    missing_ltxav_model_checkpoint_keys,
 )
 from ltx_msr_torch.ltxav_transformer import inspect_ltxav_transformer_manifest
 from ltx_msr_torch.model_paths import resolve_workflow_model_paths
@@ -83,6 +84,15 @@ def test_create_ltxav_model_from_checkpoint_on_meta_device():
     assert tuple(model.input_projection.patchify_proj.weight.shape) == (4096, 128)
     assert tuple(model.transformer_blocks[0].audio_attn1.to_q.weight.shape) == (2048, 2048)
     assert tuple(model.output_processor.audio_proj_out.weight.shape) == (128, 2048)
+
+
+def test_ltxav_model_checkpoint_mapping_keys_exist_for_workflow_checkpoint():
+    paths = resolve_workflow_model_paths(default_workflow_config())
+    model = create_ltxav_model_from_checkpoint(paths.checkpoint, device="meta")
+
+    missing = missing_ltxav_model_checkpoint_keys(model, paths.checkpoint)
+
+    assert missing == ()
 
 
 def test_ltxav_model_checkpoint_key_maps_wrapped_modules():
