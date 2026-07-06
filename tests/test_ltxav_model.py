@@ -5,8 +5,12 @@ from ltx_msr_torch.ltxav_model import (
     LTXAVModel,
     LTXAVModelConfig,
     load_ltxav_model_state_dict,
+    ltxav_model_config_from_manifest,
     ltxav_model_checkpoint_key,
 )
+from ltx_msr_torch.ltxav_transformer import inspect_ltxav_transformer_manifest
+from ltx_msr_torch.model_paths import resolve_workflow_model_paths
+from ltx_msr_torch.workflow_config import default_workflow_config
 
 
 def test_ltxav_model_forward_runs_small_pipeline():
@@ -50,6 +54,22 @@ def test_ltxav_model_forward_runs_small_pipeline():
     assert isinstance(output, list)
     assert output[0].shape == video_latents.shape
     assert output[1].shape == audio_latents.shape
+
+
+def test_ltxav_model_config_from_workflow_manifest():
+    manifest = inspect_ltxav_transformer_manifest(resolve_workflow_model_paths(default_workflow_config()).checkpoint)
+
+    config = ltxav_model_config_from_manifest(manifest)
+
+    assert config.video_in_channels == 128
+    assert config.audio_in_channels == 128
+    assert config.video_dim == 4096
+    assert config.audio_dim == 2048
+    assert config.num_layers == 48
+    assert config.video_context_dim == 4096
+    assert config.audio_context_dim == 2048
+    assert config.video_out_channels == 128
+    assert config.audio_out_channels == 128
 
 
 def test_ltxav_model_checkpoint_key_maps_wrapped_modules():

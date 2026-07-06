@@ -12,6 +12,7 @@ from .ltxav_io import LTXAVInputProjection
 from .ltxav_output import LTXAVOutputProcessor
 from .ltxav_prepare import prepare_ltxav_block_inputs
 from .ltxav_timestep import prepare_ltxav_timesteps
+from .ltxav_transformer import LTXAVTransformerManifest
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,29 @@ class LTXAVModelConfig:
     apply_gated_attention: bool = True
     timestep_scale_multiplier: float = 1000.0
     av_ca_timestep_scale_multiplier: float = 1.0
+
+
+def ltxav_model_config_from_manifest(manifest: LTXAVTransformerManifest) -> LTXAVModelConfig:
+    config = manifest.config
+    audio_in_channels = manifest.specs["model.diffusion_model.audio_patchify_proj.weight"].shape[1]
+    audio_out_channels = manifest.specs["model.diffusion_model.audio_proj_out.weight"].shape[0]
+    return LTXAVModelConfig(
+        video_in_channels=config.in_channels,
+        audio_in_channels=audio_in_channels,
+        video_dim=config.num_attention_heads * config.attention_head_dim,
+        audio_dim=config.audio_num_attention_heads * config.audio_attention_head_dim,
+        video_heads=config.num_attention_heads,
+        audio_heads=config.audio_num_attention_heads,
+        video_dim_head=config.attention_head_dim,
+        audio_dim_head=config.audio_attention_head_dim,
+        num_layers=config.num_layers,
+        video_context_dim=config.cross_attention_dim,
+        audio_context_dim=config.audio_cross_attention_dim,
+        video_out_channels=config.out_channels,
+        audio_out_channels=audio_out_channels,
+        cross_attention_adaln=config.cross_attention_adaln,
+        apply_gated_attention=config.apply_gated_attention,
+    )
 
 
 class LTXAVModel(torch.nn.Module):
