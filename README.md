@@ -117,6 +117,12 @@ Inspect video/audio VAE checkpoint sections:
 python -m ltx_msr_torch inspect-vae-sections
 ```
 
+Inspect Gemma text encoder checkpoint/config sections:
+
+```bash
+python -m ltx_msr_torch inspect-text-encoder
+```
+
 Inspect the workflow LoRA tensor pair manifest:
 
 ```bash

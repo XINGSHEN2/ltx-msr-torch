@@ -81,13 +81,15 @@ Replace one node family at a time and compare intermediate outputs:
 12. Euler sampler step math and sampler plan for manual sigmas.
 13. Video/audio VAE checkpoint section manifests and prefix-stripped state
     loading.
-14. Full checkpoint loading into torch modules.
-15. LoRA weight application to instantiated modules.
-16. PromptRelay text encoder conditioning and model patching.
-17. IC-LoRA guide VAE encode and conditioning injection.
-18. NAG model patch integration on instantiated modules.
-19. Euler sampler integration with instantiated diffusion model.
-20. VAE decode and video/audio mux.
+14. Gemma text encoder checkpoint/config manifests and tokenizer asset path
+    validation.
+15. Full checkpoint loading into torch modules.
+16. LoRA weight application to instantiated modules.
+17. PromptRelay text encoder conditioning and model patching.
+18. IC-LoRA guide VAE encode and conditioning injection.
+19. NAG model patch integration on instantiated modules.
+20. Euler sampler integration with instantiated diffusion model.
+21. VAE decode and video/audio mux.
 
 ## Parity Rule
 

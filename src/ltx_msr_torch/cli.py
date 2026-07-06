@@ -11,6 +11,7 @@ from .lora_apply import match_lora_targets
 from .lora_loader import inspect_lora_manifest, resolve_lora_path
 from .model_inspect import inspect_workflow_model_headers
 from .msr_reference import create_msr_reference_video_from_paths
+from .text_encoder_sections import inspect_text_encoder_section
 from .text_projection import build_text_projection_from_checkpoint
 from .vae_sections import inspect_vae_section
 from .workflow_extract import extract_workflow_config
@@ -99,6 +100,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Inspect video/audio VAE checkpoint sections.",
     )
 
+    inspect_text_encoder = subparsers.add_parser(
+        "inspect-text-encoder",
+        help="Inspect workflow Gemma text encoder checkpoint and config files.",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "build-reference":
         return _build_reference(args)
@@ -120,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_text_projection()
     if args.command == "inspect-vae-sections":
         return _inspect_vae_sections()
+    if args.command == "inspect-text-encoder":
+        return _inspect_text_encoder()
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -307,4 +315,19 @@ def _inspect_vae_sections() -> int:
         print(f"{prefix}_decoder_key_count={manifest.decoder_key_count}")
         print(f"{prefix}_statistics_key_count={manifest.statistics_key_count}")
         print(f"{prefix}_first_shapes={manifest.first_shapes}")
+    return 0
+
+
+def _inspect_text_encoder() -> int:
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    manifest = inspect_text_encoder_section(state.model_paths.text_encoder)
+    print(f"text_encoder_path={manifest.path}")
+    print(f"text_encoder_key_count={manifest.key_count}")
+    print(f"text_encoder_text_model_key_count={manifest.text_model_key_count}")
+    print(f"text_encoder_vision_model_key_count={manifest.vision_model_key_count}")
+    print(f"text_encoder_projector_key_count={manifest.projector_key_count}")
+    print(f"text_encoder_spiece_key_count={manifest.spiece_key_count}")
+    print(f"text_encoder_layer_count={manifest.layer_count}")
+    print(f"text_encoder_config_dir={manifest.config_paths.config_dir}")
+    print(f"text_encoder_first_text_shapes={manifest.first_text_shapes}")
     return 0
