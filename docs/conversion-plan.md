@@ -74,13 +74,15 @@ Replace one node family at a time and compare intermediate outputs:
    raw-checkpoint target matching before model-specific key-map application.
 9. Checkpoint raw safetensors section inspection, subset loading, and LoRA
    target subset apply for memory-bounded parity validation.
-10. Full checkpoint loading into torch modules.
-11. LoRA weight application to instantiated modules.
-12. PromptRelay text encoder conditioning and model patching.
-13. IC-LoRA guide VAE encode and conditioning injection.
-14. NAG model patch.
-15. Euler sampler with manual sigmas.
-16. VAE decode and video/audio mux.
+10. Text embedding projection module loading and forward logic for the LTXAV
+    dual video/audio projection.
+11. Full checkpoint loading into torch modules.
+12. LoRA weight application to instantiated modules.
+13. PromptRelay text encoder conditioning and model patching.
+14. IC-LoRA guide VAE encode and conditioning injection.
+15. NAG model patch.
+16. Euler sampler with manual sigmas.
+17. VAE decode and video/audio mux.
 
 ## Parity Rule
 

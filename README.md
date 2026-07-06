@@ -105,6 +105,12 @@ Inspect checkpoint section key counts:
 python -m ltx_msr_torch inspect-checkpoint
 ```
 
+Inspect the loaded text embedding projection module:
+
+```bash
+python -m ltx_msr_torch inspect-text-projection
+```
+
 Inspect the workflow LoRA tensor pair manifest:
 
 ```bash

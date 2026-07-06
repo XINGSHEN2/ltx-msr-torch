@@ -11,6 +11,7 @@ from .lora_apply import match_lora_targets
 from .lora_loader import inspect_lora_manifest, resolve_lora_path
 from .model_inspect import inspect_workflow_model_headers
 from .msr_reference import create_msr_reference_video_from_paths
+from .text_projection import build_text_projection_from_checkpoint
 from .workflow_extract import extract_workflow_config
 from .workflow_config import default_workflow_config
 
@@ -87,6 +88,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Inspect workflow checkpoint sections and key counts.",
     )
 
+    inspect_text_projection = subparsers.add_parser(
+        "inspect-text-projection",
+        help="Load and inspect the workflow text embedding projection module.",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "build-reference":
         return _build_reference(args)
@@ -104,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_lora_manifest()
     if args.command == "inspect-checkpoint":
         return _inspect_checkpoint()
+    if args.command == "inspect-text-projection":
+        return _inspect_text_projection()
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -253,4 +261,17 @@ def _inspect_checkpoint() -> int:
         print(f"checkpoint_section_{section.name}_key_count={section.key_count}")
         print(f"checkpoint_section_{section.name}_first_keys={list(section.first_keys)}")
     print(f"checkpoint_unknown_key_count={len(manifest.unknown_keys)}")
+    return 0
+
+
+def _inspect_text_projection() -> int:
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    module = build_text_projection_from_checkpoint(state.model_paths.checkpoint)
+    config = module.config
+    print(f"text_projection_input_dim={config.input_dim}")
+    print(f"text_projection_video_dim={config.video_dim}")
+    print(f"text_projection_audio_dim={config.audio_dim}")
+    print(f"text_projection_dtype={config.dtype}")
+    print(f"text_projection_video_weight_shape={tuple(module.video_aggregate_embed.weight.shape)}")
+    print(f"text_projection_audio_weight_shape={tuple(module.audio_aggregate_embed.weight.shape)}")
     return 0
