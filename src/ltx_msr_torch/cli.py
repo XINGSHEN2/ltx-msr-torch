@@ -14,6 +14,10 @@ from .model_inspect import inspect_workflow_model_headers
 from .msr_reference import create_msr_reference_video_from_paths
 from .prompt_utils import parse_reference_prompt_file
 from .text_encoder_sections import inspect_text_encoder_section
+from .text_conditioning import (
+    build_text_conditioning_inputs_from_plan,
+    attention_mask_tensor,
+)
 from .text_projection import build_text_projection_from_checkpoint
 from .vae_sections import inspect_vae_section
 from .workflow_extract import extract_workflow_config
@@ -113,6 +117,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     inspect_tokenizer.add_argument("--case-dir", default="sample_cases/validition_v1_01")
 
+    inspect_text_conditioning = subparsers.add_parser(
+        "inspect-text-conditioning",
+        help="Inspect local LTXAV text conditioning mask, trim, and projection shape.",
+    )
+    inspect_text_conditioning.add_argument("--case-dir", default="sample_cases/validition_v1_01")
+    inspect_text_conditioning.add_argument("--device", default="cpu")
+
     args = parser.parse_args(argv)
     if args.command == "build-reference":
         return _build_reference(args)
@@ -138,6 +149,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_text_encoder()
     if args.command == "inspect-tokenizer":
         return _inspect_tokenizer(args)
+    if args.command == "inspect-text-conditioning":
+        return _inspect_text_conditioning(args)
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -358,4 +371,26 @@ def _inspect_tokenizer(args: argparse.Namespace) -> int:
     print(f"tokenizer_token_ranges={plan.token_ranges}")
     print(f"tokenizer_first_token_ids={plan.input_ids[:16]}")
     print(f"tokenizer_first_padded_token_ids={token_weight_plan.padded_input_ids[:16]}")
+    return 0
+
+
+def _inspect_text_conditioning(args: argparse.Namespace) -> int:
+    global_prompt, local_prompts = parse_reference_prompt_file(Path(args.case_dir) / "prompt.txt")
+    tokenizer = GemmaTokenizer.from_config_paths()
+    relay_plan = tokenizer.plan_prompt_relay_tokens(
+        global_prompt=global_prompt,
+        local_prompts=local_prompts,
+    )
+    token_plan = tokenizer.tokenize_with_weights(relay_plan.full_prompt)
+    inputs = build_text_conditioning_inputs_from_plan(token_plan)
+    mask = attention_mask_tensor(inputs, device=args.device)
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    projection = build_text_projection_from_checkpoint(state.model_paths.checkpoint, device=args.device)
+    output_dim = projection.config.video_dim + projection.config.audio_dim
+    print(f"text_conditioning_token_count={inputs.real_token_count}")
+    print(f"text_conditioning_attention_mask_shape={tuple(mask.shape)}")
+    print(f"text_conditioning_projection_dtype={projection.config.dtype}")
+    print(f"text_conditioning_projection_input_dim={projection.config.input_dim}")
+    print(f"text_conditioning_expected_output_shape={(1, inputs.real_token_count, output_dim)}")
+    print("text_conditioning_extra={'unprocessed_ltxav_embeds': True}")
     return 0
