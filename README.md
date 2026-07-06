@@ -1,0 +1,58 @@
+# ltx-msr-torch
+
+Standalone PyTorch-oriented reconstruction of the ComfyUI LTX 2.3 MSR workflow.
+
+This project is being converted in stages. The first stage extracts the stable,
+non-model parts of the workflow into normal Python code and records the exact
+ComfyUI node parameters needed for parity.
+
+## Current Status
+
+- Implemented: `LiconMSR` reference-video construction.
+- Implemented: workflow parity config for the sampled ComfyUI graph.
+- Pending: direct LTX 2.3 model load, PromptRelay conditioning, IC-LoRA guide,
+  NAG patch, sampler, VAE decode, and mp4 writing.
+
+The intended path is:
+
+1. Build and verify tensors that are independent of ComfyUI.
+2. Add a compatibility runner that calls the existing ComfyUI node classes.
+3. Replace each compatibility call with local PyTorch code, one module at a time.
+
+## Usage
+
+Create an MSR reference tensor from up to four subject images plus a background:
+
+```bash
+python -m ltx_msr_torch build-reference \
+  --subject-1 /path/to/1.png \
+  --subject-2 /path/to/2.png \
+  --background /path/to/background.png \
+  --output /tmp/msr_reference.pt
+```
+
+The saved tensor matches ComfyUI image tensor convention:
+
+```text
+[frames, height, width, channels], float32, range [0, 1]
+```
+
+Default dimensions and frame count match the inspected workflow:
+
+```text
+width=1920, height=1280, frame_count=41
+```
+
+## Parity Notes
+
+The source ComfyUI workflow uses:
+
+- checkpoint: `ltx-2.3-22b-distilled-1.1.safetensors`
+- text encoder: `gemma_3_12B_it.safetensors`
+- LoRA: `LTX-2.3/LTX-2.3-Licon-MSR-V1.safetensors`
+- sampler: `euler`
+- CFG: `1`
+- NAG: scale `11`, alpha `0.25`, tau `2.5`, inplace `true`
+- IC-LoRA guide: frame index `0`, strength `1`, latent downscale `1`, crop `center`
+- sigmas: `1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0`
+
