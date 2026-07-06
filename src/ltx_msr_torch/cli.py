@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .comfy_api_prompt import build_case_api_prompt, save_api_prompt
+from .comfy_client import load_api_prompt, queue_prompt, wait_for_history
 from .msr_reference import create_msr_reference_video_from_paths
 from .workflow_extract import extract_workflow_config
 from .workflow_config import default_workflow_config
@@ -34,11 +36,40 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional ComfyUI workflow JSON to extract config from.",
     )
 
+    build_api_prompt = subparsers.add_parser(
+        "build-api-prompt",
+        help="Build a ComfyUI API prompt from the MSR workflow and a sample case.",
+    )
+    build_api_prompt.add_argument(
+        "--workflow",
+        default="/home/xingshen/ComfyUI/custom_nodes/ComfyUI-Licon-MSR/LTX-2.3_MSR_sample_workflow_V2.json",
+    )
+    build_api_prompt.add_argument("--case-dir", required=True)
+    build_api_prompt.add_argument("--output", required=True)
+    build_api_prompt.add_argument(
+        "--output-prefix",
+        default="LTX-2/MSR_torch_parity",
+        help="ComfyUI output filename prefix for the SaveVideo node.",
+    )
+
+    submit_api_prompt = subparsers.add_parser(
+        "submit-api-prompt",
+        help="Submit an API prompt JSON to a running ComfyUI server.",
+    )
+    submit_api_prompt.add_argument("--prompt", required=True)
+    submit_api_prompt.add_argument("--server", default="127.0.0.1:8188")
+    submit_api_prompt.add_argument("--wait", action="store_true")
+    submit_api_prompt.add_argument("--timeout-seconds", type=float, default=None)
+
     args = parser.parse_args(argv)
     if args.command == "build-reference":
         return _build_reference(args)
     if args.command == "inspect-config":
         return _inspect_config(args)
+    if args.command == "build-api-prompt":
+        return _build_api_prompt(args)
+    if args.command == "submit-api-prompt":
+        return _submit_api_prompt(args)
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -76,4 +107,30 @@ def _inspect_config(args: argparse.Namespace) -> int:
     else:
         config = default_workflow_config()
     print(config)
+    return 0
+
+
+def _build_api_prompt(args: argparse.Namespace) -> int:
+    prompt = build_case_api_prompt(
+        workflow_path=args.workflow,
+        case_dir=args.case_dir,
+        output_prefix=args.output_prefix,
+    )
+    save_api_prompt(prompt, args.output)
+    print(f"saved API prompt {args.output} nodes={len(prompt)}")
+    return 0
+
+
+def _submit_api_prompt(args: argparse.Namespace) -> int:
+    prompt = load_api_prompt(args.prompt)
+    response = queue_prompt(prompt, server=args.server)
+    print(response)
+    prompt_id = response.get("prompt_id")
+    if args.wait and prompt_id:
+        history = wait_for_history(
+            prompt_id,
+            server=args.server,
+            timeout_seconds=args.timeout_seconds,
+        )
+        print(history)
     return 0

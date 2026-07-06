@@ -10,6 +10,7 @@ ComfyUI node parameters needed for parity.
 
 - Implemented: `LiconMSR` reference-video construction.
 - Implemented: workflow parity config for the sampled ComfyUI graph.
+- Implemented: ComfyUI UI-workflow to API-prompt conversion for MSR case tests.
 - Pending: direct LTX 2.3 model load, PromptRelay conditioning, IC-LoRA guide,
   NAG patch, sampler, VAE decode, and mp4 writing.
 
@@ -43,6 +44,15 @@ Default dimensions and frame count match the inspected workflow:
 width=1920, height=1280, frame_count=41
 ```
 
+Build a ComfyUI API prompt for a downloaded MSR validation case:
+
+```bash
+python -m ltx_msr_torch build-api-prompt \
+  --case-dir /mnt/AINAS0/user/xingshen/LTX-2.3-Multiple-Subject-Reference/examples-hf/validition_v1/01 \
+  --output outputs/validition_v1_01_api_prompt.json \
+  --output-prefix LTX-2/MSR_torch_parity_01
+```
+
 ## Parity Notes
 
 The source ComfyUI workflow uses:
@@ -55,4 +65,3 @@ The source ComfyUI workflow uses:
 - NAG: scale `11`, alpha `0.25`, tau `2.5`, inplace `true`
 - IC-LoRA guide: frame index `0`, strength `1`, latent downscale `1`, crop `center`
 - sigmas: `1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0`
-

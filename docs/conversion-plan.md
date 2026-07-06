@@ -14,6 +14,8 @@ Status: started.
 
 ## Stage 2: Compatibility Runner
 
+Status: started.
+
 Add a runner that calls ComfyUI node classes directly from this project:
 
 - `LowVRAMCheckpointLoader`
@@ -31,6 +33,23 @@ Add a runner that calls ComfyUI node classes directly from this project:
 - `CreateVideo` / `SaveVideo`
 
 This is the parity baseline.
+
+The first compatibility step uses ComfyUI API prompt JSON:
+
+```bash
+PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch build-api-prompt \
+  --case-dir /mnt/AINAS0/user/xingshen/LTX-2.3-Multiple-Subject-Reference/examples-hf/validition_v1/01 \
+  --output outputs/validition_v1_01_api_prompt.json \
+  --output-prefix LTX-2/MSR_torch_parity_01
+```
+
+If a ComfyUI server is already running, submit it with:
+
+```bash
+PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch submit-api-prompt \
+  --prompt outputs/validition_v1_01_api_prompt.json \
+  --server 127.0.0.1:8188
+```
 
 ## Stage 3: Replace Nodes With Local Code
 
@@ -56,4 +75,3 @@ For every replaced module, compare:
 - fixed-seed output drift
 
 Do not replace multiple model-affecting nodes in one step.
-
