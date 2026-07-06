@@ -123,6 +123,13 @@ Inspect Gemma text encoder checkpoint/config sections:
 python -m ltx_msr_torch inspect-text-encoder
 ```
 
+Gemma tokenizer loading and PromptRelay token range planning are available from
+`ltx_msr_torch.gemma_tokenizer`.
+
+```bash
+python -m ltx_msr_torch inspect-tokenizer --case-dir sample_cases/validition_v1_01
+```
+
 Inspect the workflow LoRA tensor pair manifest:
 
 ```bash

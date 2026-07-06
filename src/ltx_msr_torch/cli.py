@@ -6,11 +6,13 @@ from pathlib import Path
 from .checkpoint_loader import apply_lora_to_checkpoint_subset, inspect_checkpoint_manifest
 from .comfy_api_prompt import build_case_api_prompt, save_api_prompt
 from .comfy_client import load_api_prompt, queue_prompt, wait_for_history
+from .gemma_tokenizer import GemmaTokenizer
 from .local_state import build_low_level_state
 from .lora_apply import match_lora_targets
 from .lora_loader import inspect_lora_manifest, resolve_lora_path
 from .model_inspect import inspect_workflow_model_headers
 from .msr_reference import create_msr_reference_video_from_paths
+from .prompt_utils import parse_reference_prompt_file
 from .text_encoder_sections import inspect_text_encoder_section
 from .text_projection import build_text_projection_from_checkpoint
 from .vae_sections import inspect_vae_section
@@ -105,6 +107,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Inspect workflow Gemma text encoder checkpoint and config files.",
     )
 
+    inspect_tokenizer = subparsers.add_parser(
+        "inspect-tokenizer",
+        help="Tokenize a sample case prompt and print PromptRelay token ranges.",
+    )
+    inspect_tokenizer.add_argument("--case-dir", default="sample_cases/validition_v1_01")
+
     args = parser.parse_args(argv)
     if args.command == "build-reference":
         return _build_reference(args)
@@ -128,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_vae_sections()
     if args.command == "inspect-text-encoder":
         return _inspect_text_encoder()
+    if args.command == "inspect-tokenizer":
+        return _inspect_tokenizer(args)
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -330,4 +340,18 @@ def _inspect_text_encoder() -> int:
     print(f"text_encoder_layer_count={manifest.layer_count}")
     print(f"text_encoder_config_dir={manifest.config_paths.config_dir}")
     print(f"text_encoder_first_text_shapes={manifest.first_text_shapes}")
+    return 0
+
+
+def _inspect_tokenizer(args: argparse.Namespace) -> int:
+    global_prompt, local_prompts = parse_reference_prompt_file(Path(args.case_dir) / "prompt.txt")
+    tokenizer = GemmaTokenizer.from_config_paths()
+    plan = tokenizer.plan_prompt_relay_tokens(
+        global_prompt=global_prompt,
+        local_prompts=local_prompts,
+    )
+    print(f"tokenizer_full_prompt_token_count={len(plan.input_ids)}")
+    print(f"tokenizer_local_prompt_count={len(plan.local_prompts)}")
+    print(f"tokenizer_token_ranges={plan.token_ranges}")
+    print(f"tokenizer_first_token_ids={plan.input_ids[:16]}")
     return 0

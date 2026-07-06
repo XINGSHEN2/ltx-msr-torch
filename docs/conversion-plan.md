@@ -83,13 +83,15 @@ Replace one node family at a time and compare intermediate outputs:
     loading.
 14. Gemma text encoder checkpoint/config manifests and tokenizer asset path
     validation.
-15. Full checkpoint loading into torch modules.
-16. LoRA weight application to instantiated modules.
-17. PromptRelay text encoder conditioning and model patching.
-18. IC-LoRA guide VAE encode and conditioning injection.
-19. NAG model patch integration on instantiated modules.
-20. Euler sampler integration with instantiated diffusion model.
-21. VAE decode and video/audio mux.
+15. Gemma tokenizer loading and PromptRelay token range planning with the real
+    tokenizer assets.
+16. Full checkpoint loading into torch modules.
+17. LoRA weight application to instantiated modules.
+18. PromptRelay text encoder conditioning and model patching.
+19. IC-LoRA guide VAE encode and conditioning injection.
+20. NAG model patch integration on instantiated modules.
+21. Euler sampler integration with instantiated diffusion model.
+22. VAE decode and video/audio mux.
 
 ## Parity Rule
 
