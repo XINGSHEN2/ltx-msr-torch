@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, TypeAlias
 
 import torch
 
 
 Denoiser = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+Latents: TypeAlias = torch.Tensor | tuple[torch.Tensor, torch.Tensor]
+LatentDenoiser: TypeAlias = Callable[[Latents, torch.Tensor], Latents]
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,38 @@ def euler_step(
     return x + derivative * append_dims(sigma_next - sigma, x.ndim)
 
 
+def _latent_zip_map(left: Latents, right: Latents, fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]) -> Latents:
+    if isinstance(left, torch.Tensor) and isinstance(right, torch.Tensor):
+        return fn(left, right)
+    if isinstance(left, tuple) and isinstance(right, tuple) and len(left) == len(right):
+        return tuple(fn(left_value, right_value) for left_value, right_value in zip(left, right))  # type: ignore[return-value]
+    raise TypeError("latent structures must both be tensors or same-length tuples")
+
+
+def _latent_map(value: Latents, fn: Callable[[torch.Tensor], torch.Tensor]) -> Latents:
+    if isinstance(value, torch.Tensor):
+        return fn(value)
+    return tuple(fn(item) for item in value)
+
+
+def to_d_latents(x: Latents, sigma: torch.Tensor, denoised: Latents) -> Latents:
+    return _latent_zip_map(x, denoised, lambda x_item, denoised_item: to_d(x_item, sigma, denoised_item))
+
+
+def euler_step_latents(
+    x: Latents,
+    denoised: Latents,
+    sigma: torch.Tensor,
+    sigma_next: torch.Tensor,
+) -> Latents:
+    derivative = to_d_latents(x, sigma, denoised)
+    return _latent_zip_map(
+        x,
+        derivative,
+        lambda x_item, derivative_item: x_item + derivative_item * append_dims(sigma_next - sigma, x_item.ndim),
+    )
+
+
 @torch.no_grad()
 def sample_euler(
     denoiser: Denoiser,
@@ -51,6 +85,21 @@ def sample_euler(
         sigma = sigmas[index]
         denoised = denoiser(x, sigma * s_in)
         x = euler_step(x, denoised, sigma, sigmas[index + 1])
+    return x
+
+
+@torch.no_grad()
+def sample_euler_latents(
+    denoiser: LatentDenoiser,
+    x: Latents,
+    sigmas: torch.Tensor,
+) -> Latents:
+    first = x if isinstance(x, torch.Tensor) else x[0]
+    s_in = first.new_ones([first.shape[0]])
+    for index in range(len(sigmas) - 1):
+        sigma = sigmas[index]
+        denoised = denoiser(x, sigma * s_in)
+        x = euler_step_latents(x, denoised, sigma, sigmas[index + 1])
     return x
 
 

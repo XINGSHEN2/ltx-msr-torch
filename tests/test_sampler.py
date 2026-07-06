@@ -1,6 +1,15 @@
 import torch
 
-from ltx_msr_torch.sampler import append_dims, build_sampler_plan, euler_step, sample_euler, to_d
+from ltx_msr_torch.sampler import (
+    append_dims,
+    build_sampler_plan,
+    euler_step,
+    euler_step_latents,
+    sample_euler,
+    sample_euler_latents,
+    to_d,
+    to_d_latents,
+)
 
 
 def test_append_dims_matches_k_diffusion_shape_rule():
@@ -36,6 +45,42 @@ def test_sample_euler_runs_deterministic_steps():
     out = sample_euler(denoiser, torch.tensor([[4.0]]), sigmas)
 
     assert torch.allclose(out, torch.tensor([[1.5]]))
+
+
+def test_to_d_latents_supports_video_audio_tuple():
+    x = (torch.tensor([[3.0]]), torch.tensor([[5.0]]))
+    denoised = (torch.tensor([[1.0]]), torch.tensor([[1.0]]))
+    derivative = to_d_latents(x, torch.tensor([2.0]), denoised)
+
+    assert isinstance(derivative, tuple)
+    assert torch.equal(derivative[0], torch.tensor([[1.0]]))
+    assert torch.equal(derivative[1], torch.tensor([[2.0]]))
+
+
+def test_euler_step_latents_updates_each_latent():
+    x = (torch.tensor([[3.0]]), torch.tensor([[5.0]]))
+    denoised = (torch.tensor([[1.0]]), torch.tensor([[1.0]]))
+
+    out = euler_step_latents(x, denoised, torch.tensor(2.0), torch.tensor(1.0))
+
+    assert isinstance(out, tuple)
+    assert torch.equal(out[0], torch.tensor([[2.0]]))
+    assert torch.equal(out[1], torch.tensor([[3.0]]))
+
+
+def test_sample_euler_latents_runs_video_audio_tuple():
+    sigmas = torch.tensor([2.0, 1.0, 0.0])
+
+    def denoiser(x, sigma):
+        assert sigma.shape == (1,)
+        assert isinstance(x, tuple)
+        return x[0] * 0.5, x[1] * 0.25
+
+    out = sample_euler_latents(denoiser, (torch.tensor([[4.0]]), torch.tensor([[8.0]])), sigmas)
+
+    assert isinstance(out, tuple)
+    assert torch.allclose(out[0], torch.tensor([[1.5]]))
+    assert torch.allclose(out[1], torch.tensor([[1.25]]))
 
 
 def test_build_sampler_plan_uses_workflow_sigmas():
