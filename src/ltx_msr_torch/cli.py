@@ -7,6 +7,7 @@ from .checkpoint_loader import apply_lora_to_checkpoint_subset, inspect_checkpoi
 from .comfy_api_prompt import build_case_api_prompt, save_api_prompt
 from .comfy_client import load_api_prompt, queue_prompt, wait_for_history
 from .gemma_tokenizer import GemmaTokenizer
+from .gemma_text_model import inspect_gemma_text_model_compatibility, load_gemma3_text_config
 from .local_state import build_low_level_state
 from .lora_apply import match_lora_targets
 from .lora_loader import inspect_lora_manifest, resolve_lora_path
@@ -124,6 +125,11 @@ def main(argv: list[str] | None = None) -> int:
     inspect_text_conditioning.add_argument("--case-dir", default="sample_cases/validition_v1_01")
     inspect_text_conditioning.add_argument("--device", default="cpu")
 
+    inspect_gemma_model = subparsers.add_parser(
+        "inspect-gemma-text-model",
+        help="Inspect local Transformers Gemma3 text model compatibility with workflow weights.",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "build-reference":
         return _build_reference(args)
@@ -151,6 +157,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_tokenizer(args)
     if args.command == "inspect-text-conditioning":
         return _inspect_text_conditioning(args)
+    if args.command == "inspect-gemma-text-model":
+        return _inspect_gemma_text_model()
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -393,4 +401,23 @@ def _inspect_text_conditioning(args: argparse.Namespace) -> int:
     print(f"text_conditioning_projection_input_dim={projection.config.input_dim}")
     print(f"text_conditioning_expected_output_shape={(1, inputs.real_token_count, output_dim)}")
     print("text_conditioning_extra={'unprocessed_ltxav_embeds': True}")
+    return 0
+
+
+def _inspect_gemma_text_model() -> int:
+    config = load_gemma3_text_config()
+    compatibility = inspect_gemma_text_model_compatibility()
+    print(f"gemma_text_hidden_size={config.hidden_size}")
+    print(f"gemma_text_intermediate_size={config.intermediate_size}")
+    print(f"gemma_text_layer_count={config.num_hidden_layers}")
+    print(f"gemma_text_attention_heads={config.num_attention_heads}")
+    print(f"gemma_text_key_value_heads={config.num_key_value_heads}")
+    print(f"gemma_text_head_dim={config.head_dim}")
+    print(f"gemma_text_vocab_size={config.vocab_size}")
+    print(f"gemma_text_checkpoint_key_count={compatibility.checkpoint_key_count}")
+    print(f"gemma_text_hf_key_count={compatibility.hf_key_count}")
+    print(f"gemma_text_matched_key_count={compatibility.matched_key_count}")
+    print(f"gemma_text_exact_key_match={compatibility.is_exact_match}")
+    print(f"gemma_text_missing_hf_key_count={len(compatibility.missing_hf_keys)}")
+    print(f"gemma_text_unexpected_checkpoint_key_count={len(compatibility.unexpected_checkpoint_keys)}")
     return 0
