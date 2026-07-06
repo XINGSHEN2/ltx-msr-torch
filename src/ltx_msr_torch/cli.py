@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .comfy_api_prompt import build_case_api_prompt, save_api_prompt
 from .comfy_client import load_api_prompt, queue_prompt, wait_for_history
+from .local_state import build_low_level_state
 from .msr_reference import create_msr_reference_video_from_paths
 from .workflow_extract import extract_workflow_config
 from .workflow_config import default_workflow_config
@@ -61,6 +62,12 @@ def main(argv: list[str] | None = None) -> int:
     submit_api_prompt.add_argument("--wait", action="store_true")
     submit_api_prompt.add_argument("--timeout-seconds", type=float, default=None)
 
+    inspect_local = subparsers.add_parser(
+        "inspect-local-state",
+        help="Print local torch replacements for parity-critical low-level nodes.",
+    )
+    inspect_local.add_argument("--device", default="cpu")
+
     args = parser.parse_args(argv)
     if args.command == "build-reference":
         return _build_reference(args)
@@ -70,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
         return _build_api_prompt(args)
     if args.command == "submit-api-prompt":
         return _submit_api_prompt(args)
+    if args.command == "inspect-local-state":
+        return _inspect_local_state(args)
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -133,4 +142,23 @@ def _submit_api_prompt(args: argparse.Namespace) -> int:
             timeout_seconds=args.timeout_seconds,
         )
         print(history)
+    return 0
+
+
+def _inspect_local_state(args: argparse.Namespace) -> int:
+    config = default_workflow_config()
+    state = build_low_level_state(config, device=args.device)
+    print(f"reference_width={state.width}")
+    print(f"reference_height={state.height}")
+    print(f"reference_frame_count={state.frame_count}")
+    print(f"video_length={state.video_length}")
+    print(f"video_latent_shape={tuple(state.video_latent['samples'].shape)}")
+    print(f"video_latent_downscale_ratio_spacial={state.video_latent['downscale_ratio_spacial']}")
+    print(f"sigmas={state.sigmas.tolist()}")
+    print(f"noise_seed={state.noise.seed}")
+    print(f"checkpoint={state.model_paths.checkpoint}")
+    print(f"text_encoder={state.model_paths.text_encoder}")
+    print(f"lora={state.model_paths.lora}")
+    print(f"lora_strength={state.ic_lora.strength_model}")
+    print(f"lora_reference_downscale_factor={state.ic_lora.latent_downscale_factor}")
     return 0

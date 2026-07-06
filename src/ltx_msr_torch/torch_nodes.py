@@ -115,3 +115,36 @@ def empty_ltxv_latent_audio(
         "type": "audio",
     }
 
+
+def conditioning_set_values(
+    conditioning: list[list[object]],
+    values: dict[str, object],
+    *,
+    append: bool = False,
+) -> list[list[object]]:
+    """Local equivalent of ComfyUI `node_helpers.conditioning_set_values`."""
+    output: list[list[object]] = []
+    for item in conditioning:
+        metadata = item[1].copy()
+        for key, new_value in values.items():
+            value = new_value
+            if append:
+                old_value = metadata.get(key)
+                if old_value is not None:
+                    value = old_value + new_value
+            metadata[key] = value
+        output.append([item[0], metadata])
+    return output
+
+
+def ltxv_conditioning(
+    positive: list[list[object]],
+    negative: list[list[object]],
+    frame_rate: float,
+) -> tuple[list[list[object]], list[list[object]]]:
+    """Local equivalent of ComfyUI `LTXVConditioning`."""
+    values = {"frame_rate": frame_rate}
+    return (
+        conditioning_set_values(positive, values),
+        conditioning_set_values(negative, values),
+    )

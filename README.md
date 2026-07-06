@@ -12,6 +12,12 @@ ComfyUI node parameters needed for parity.
 - Implemented: local PyTorch replacements for low-level workflow nodes:
   `INTConstant`, `ManualSigmas`, `RandomNoise`, `EmptyLTXVLatentVideo`, and
   `LTXVEmptyLatentAudio`.
+- Implemented: local conditioning metadata replacement for `LTXVConditioning`.
+- Implemented: metadata-only local inspection for `LTXICLoRALoaderModelOnly`
+  with ComfyUI-style LoRA path resolution and `reference_downscale_factor`
+  extraction.
+- Implemented: local ComfyUI-style path resolution for checkpoint, text
+  encoder, LoRA, and audio VAE checkpoint files.
 - Implemented: workflow parity config for the sampled ComfyUI graph.
 - Implemented: ComfyUI UI-workflow to API-prompt conversion for MSR case tests.
 - Pending: direct LTX 2.3 model load, PromptRelay conditioning, IC-LoRA guide,
@@ -78,13 +84,19 @@ python -m ltx_msr_torch submit-api-prompt \
 
 The local ComfyUI client bypasses environment HTTP proxies for `127.0.0.1`.
 
+Inspect the local torch replacements and resolved workflow parameters:
+
+```bash
+python -m ltx_msr_torch inspect-local-state
+```
+
 ## Parity Notes
 
 The source ComfyUI workflow uses:
 
 - checkpoint: `ltx-2.3-22b-distilled-1.1.safetensors`
 - text encoder: `gemma_3_12B_it.safetensors`
-- LoRA: `LTX-2.3/LTX-2.3-Licon-MSR-V1.safetensors`
+- LoRA: `LTX-2.3\LTX-2.3-Licon-MSR-V1.safetensors`
 - sampler: `euler`
 - CFG: `1`
 - NAG: scale `11`, alpha `0.25`, tau `2.5`, inplace `true`

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import torch
 
+from .lora_loader import LocalICLoRALoadResult, inspect_ic_lora_model_only
+from .model_paths import LocalModelPaths, resolve_workflow_model_paths
 from .torch_nodes import (
     LocalRandomNoise,
     empty_ltxv_latent_video,
@@ -23,6 +25,8 @@ class LocalLowLevelState:
     video_latent: dict[str, torch.Tensor | int]
     sigmas: torch.Tensor
     noise: LocalRandomNoise
+    ic_lora: LocalICLoRALoadResult
+    model_paths: LocalModelPaths
 
 
 def build_low_level_state(
@@ -43,6 +47,11 @@ def build_low_level_state(
         batch_size=config.latent.batch_size,
         device=device,
     )
+    ic_lora = inspect_ic_lora_model_only(
+        config.model.lora,
+        strength_model=config.model.lora_strength,
+    )
+    model_paths = resolve_workflow_model_paths(config)
     return LocalLowLevelState(
         width=width,
         height=height,
@@ -51,5 +60,6 @@ def build_low_level_state(
         video_latent=video_latent,
         sigmas=sigmas,
         noise=noise,
+        ic_lora=ic_lora,
+        model_paths=model_paths,
     )
-

@@ -12,4 +12,8 @@ def test_build_low_level_state_uses_workflow_parameters():
     assert state.noise.seed == 337096718960207
     assert tuple(state.sigmas.shape) == (9,)
     assert tuple(state.video_latent["samples"].shape) == (1, 128, 19, 60, 40)
-
+    assert state.ic_lora.latent_downscale_factor == 1.0
+    assert state.ic_lora.lora_path.exists()
+    assert state.model_paths.checkpoint.exists()
+    assert state.model_paths.text_encoder.exists()
+    assert state.model_paths.lora.exists()

@@ -4,6 +4,7 @@ from ltx_msr_torch.torch_nodes import (
     empty_ltxv_latent_audio,
     empty_ltxv_latent_video,
     int_constant,
+    ltxv_conditioning,
     manual_sigmas,
     random_noise,
 )
@@ -74,3 +75,14 @@ def test_random_noise_preserves_seed_and_shape_contract():
     assert tuple(first.shape) == (1, 4, 2, 3, 5)
     assert torch.equal(first, second)
 
+
+def test_ltxv_conditioning_sets_frame_rate_without_mutating_input():
+    positive = [["cond", {"existing": 1}]]
+    negative = [["neg", {}]]
+
+    out_positive, out_negative = ltxv_conditioning(positive, negative, 24.0)
+
+    assert out_positive == [["cond", {"existing": 1, "frame_rate": 24.0}]]
+    assert out_negative == [["neg", {"frame_rate": 24.0}]]
+    assert positive == [["cond", {"existing": 1}]]
+    assert negative == [["neg", {}]]

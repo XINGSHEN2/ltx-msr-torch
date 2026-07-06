@@ -60,13 +60,18 @@ Replace one node family at a time and compare intermediate outputs:
 1. Local low-level nodes:
    `INTConstant`, `ManualSigmas`, `RandomNoise`, `EmptyLTXVLatentVideo`, and
    `LTXVEmptyLatentAudio`.
-2. Model path resolution and checkpoint loading.
-3. LoRA application.
-4. PromptRelay text conditioning.
-5. IC-LoRA guide encode and conditioning injection.
-6. NAG model patch.
-7. Euler sampler with manual sigmas.
-8. VAE decode and video/audio mux.
+2. Metadata-only `LTXICLoRALoaderModelOnly` inspection:
+   LoRA path resolution and `reference_downscale_factor` extraction.
+3. `LTXVConditioning` conditioning metadata update.
+4. Model path resolution for checkpoint, text encoder, LoRA, and audio VAE
+   checkpoint files.
+5. Checkpoint loading.
+6. LoRA weight application.
+7. PromptRelay text conditioning.
+8. IC-LoRA guide encode and conditioning injection.
+9. NAG model patch.
+10. Euler sampler with manual sigmas.
+11. VAE decode and video/audio mux.
 
 ## Parity Rule
 
