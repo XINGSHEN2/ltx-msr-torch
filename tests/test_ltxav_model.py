@@ -4,14 +4,18 @@ from safetensors.torch import save_file
 from ltx_msr_torch.ltxav_model import (
     LTXAVModel,
     LTXAVModelConfig,
+    apply_lora_to_ltxav_model,
     create_ltxav_model_from_checkpoint,
     load_ltxav_model_state_dict,
     load_ltxav_model_weights_streaming,
     ltxav_model_config_from_manifest,
     ltxav_model_checkpoint_key,
+    ltxav_model_local_key,
     missing_ltxav_model_checkpoint_keys,
 )
 from ltx_msr_torch.ltxav_transformer import inspect_ltxav_transformer_manifest
+from ltx_msr_torch.lora_apply import target_key_candidates
+from ltx_msr_torch.lora_loader import LoRAManifest, LoRAPairManifest, inspect_lora_manifest, resolve_lora_path
 from ltx_msr_torch.model_paths import resolve_workflow_model_paths
 from ltx_msr_torch.workflow_config import default_workflow_config
 
@@ -96,6 +100,28 @@ def test_ltxav_model_checkpoint_mapping_keys_exist_for_workflow_checkpoint():
     assert missing == ()
 
 
+def test_workflow_lora_targets_map_to_ltxav_model_keys():
+    paths = resolve_workflow_model_paths(default_workflow_config())
+    model = create_ltxav_model_from_checkpoint(paths.checkpoint, device="meta")
+    local_keys = set(model.state_dict())
+    manifest = inspect_lora_manifest(resolve_lora_path(default_workflow_config().model.lora))
+
+    mapped = [
+        next(
+            (
+                local_key
+                for candidate in target_key_candidates(pair.target_key)
+                if (local_key := ltxav_model_local_key(candidate, local_keys)) is not None
+            ),
+            None,
+        )
+        for pair in manifest.pairs
+    ]
+
+    assert len(mapped) == manifest.pair_count
+    assert all(key is not None for key in mapped)
+
+
 def test_ltxav_model_checkpoint_key_maps_wrapped_modules():
     assert ltxav_model_checkpoint_key("input_projection.patchify_proj.weight") == (
         "model.diffusion_model.patchify_proj.weight"
@@ -108,6 +134,32 @@ def test_ltxav_model_checkpoint_key_maps_wrapped_modules():
     )
     assert ltxav_model_checkpoint_key("transformer_blocks.0.attn1.to_q.weight") == (
         "model.diffusion_model.transformer_blocks.0.attn1.to_q.weight"
+    )
+
+
+def test_ltxav_model_local_key_maps_checkpoint_keys_to_wrapped_modules():
+    keys = {
+        "input_projection.patchify_proj.weight",
+        "output_processor.audio_proj_out.bias",
+        "video_adaln_single.linear.weight",
+        "audio_adaln_single.linear.weight",
+        "transformer_blocks.0.attn1.to_q.weight",
+    }
+
+    assert ltxav_model_local_key("model.diffusion_model.patchify_proj.weight", keys) == (
+        "input_projection.patchify_proj.weight"
+    )
+    assert ltxav_model_local_key("model.diffusion_model.audio_proj_out.bias", keys) == (
+        "output_processor.audio_proj_out.bias"
+    )
+    assert ltxav_model_local_key("model.diffusion_model.adaln_single.linear.weight", keys) == (
+        "video_adaln_single.linear.weight"
+    )
+    assert ltxav_model_local_key("model.diffusion_model.audio_adaln_single.linear.weight", keys) == (
+        "audio_adaln_single.linear.weight"
+    )
+    assert ltxav_model_local_key("model.diffusion_model.transformer_blocks.0.attn1.to_q.weight", keys) == (
+        "transformer_blocks.0.attn1.to_q.weight"
     )
 
 
@@ -211,3 +263,88 @@ def test_load_ltxav_model_weights_streaming_assigns_meta_model(tmp_path):
     assert report.loaded == len(local_state)
     assert not model.input_projection.patchify_proj.weight.is_meta
     assert torch.allclose(model.input_projection.patchify_proj.weight, torch.full_like(model.input_projection.patchify_proj.weight, 0.5))
+
+
+def test_apply_lora_to_ltxav_model_updates_wrapped_and_direct_targets(tmp_path):
+    config = LTXAVModelConfig(
+        video_in_channels=2,
+        audio_in_channels=6,
+        video_dim=12,
+        audio_dim=4,
+        video_heads=2,
+        audio_heads=2,
+        video_dim_head=6,
+        audio_dim_head=2,
+        num_layers=1,
+        video_context_dim=12,
+        audio_context_dim=4,
+        video_out_channels=2,
+        audio_out_channels=6,
+        audio_channels=2,
+        audio_frequency=3,
+    )
+    model = LTXAVModel(config, dtype=torch.float32)
+    with torch.no_grad():
+        model.input_projection.patchify_proj.weight.zero_()
+        model.video_adaln_single.linear.weight.zero_()
+        model.transformer_blocks[0].attn1.to_q.weight.zero_()
+    lora_path = tmp_path / "small_ltxav_lora.safetensors"
+    save_file(
+        {
+            "model.diffusion_model.patchify_proj.lora_A.weight": torch.ones(1, 2),
+            "model.diffusion_model.patchify_proj.lora_B.weight": torch.ones(12, 1),
+            "model.diffusion_model.adaln_single.linear.lora_A.weight": torch.ones(1, 12),
+            "model.diffusion_model.adaln_single.linear.lora_B.weight": torch.ones(108, 1),
+            "model.diffusion_model.transformer_blocks.0.attn1.to_q.lora_A.weight": torch.ones(1, 12),
+            "model.diffusion_model.transformer_blocks.0.attn1.to_q.lora_B.weight": torch.ones(12, 1),
+        },
+        lora_path,
+    )
+    pairs = (
+        LoRAPairManifest(
+            prefix="model.diffusion_model.patchify_proj",
+            target_key="model.diffusion_model.patchify_proj.weight",
+            lora_a_key="model.diffusion_model.patchify_proj.lora_A.weight",
+            lora_b_key="model.diffusion_model.patchify_proj.lora_B.weight",
+            lora_a_shape=(1, 2),
+            lora_b_shape=(12, 1),
+            rank=1,
+            alpha=None,
+        ),
+        LoRAPairManifest(
+            prefix="model.diffusion_model.adaln_single.linear",
+            target_key="model.diffusion_model.adaln_single.linear.weight",
+            lora_a_key="model.diffusion_model.adaln_single.linear.lora_A.weight",
+            lora_b_key="model.diffusion_model.adaln_single.linear.lora_B.weight",
+            lora_a_shape=(1, 12),
+            lora_b_shape=(108, 1),
+            rank=1,
+            alpha=None,
+        ),
+        LoRAPairManifest(
+            prefix="model.diffusion_model.transformer_blocks.0.attn1.to_q",
+            target_key="model.diffusion_model.transformer_blocks.0.attn1.to_q.weight",
+            lora_a_key="model.diffusion_model.transformer_blocks.0.attn1.to_q.lora_A.weight",
+            lora_b_key="model.diffusion_model.transformer_blocks.0.attn1.to_q.lora_B.weight",
+            lora_a_shape=(1, 12),
+            lora_b_shape=(12, 1),
+            rank=1,
+            alpha=None,
+        ),
+    )
+    manifest = LoRAManifest(
+        path=lora_path,
+        metadata=None,
+        key_count=6,
+        pair_count=3,
+        pairs=pairs,
+        unpaired_keys=(),
+    )
+
+    report = apply_lora_to_ltxav_model(model, lora_path=lora_path, manifest=manifest, strength=0.5)
+
+    assert report.matched == 3
+    assert report.skipped == 0
+    assert torch.equal(model.input_projection.patchify_proj.weight, torch.full_like(model.input_projection.patchify_proj.weight, 0.5))
+    assert torch.equal(model.video_adaln_single.linear.weight, torch.full_like(model.video_adaln_single.linear.weight, 0.5))
+    assert torch.equal(model.transformer_blocks[0].attn1.to_q.weight, torch.full_like(model.transformer_blocks[0].attn1.to_q.weight, 0.5))

@@ -7,6 +7,8 @@ import torch
 from safetensors import safe_open
 
 from .checkpoint_loader import load_safetensors_subset
+from .lora_apply import lora_pair_delta, target_key_candidates
+from .lora_loader import LoRAManifest
 from .ltx_blocks import BasicAVTransformerBlock
 from .ltx_timestep import ADALN_CROSS_ATTN_PARAMS_COUNT, AdaLayerNormSingle
 from .ltxav_io import LTXAVInputProjection
@@ -44,6 +46,14 @@ class LTXAVModelLoadReport:
     loaded: int
     missing: tuple[str, ...]
     unexpected: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class LTXAVModelLoRAReport:
+    matched: int
+    skipped: int
+    applied_keys: tuple[str, ...]
+    skipped_targets: tuple[str, ...]
 
 
 def ltxav_model_config_from_manifest(manifest: LTXAVTransformerManifest) -> LTXAVModelConfig:
@@ -269,6 +279,26 @@ def ltxav_model_checkpoint_key(model_state_key: str) -> str:
     return f"model.diffusion_model.{model_state_key}"
 
 
+def ltxav_model_local_key(checkpoint_key: str, local_keys: set[str]) -> str | None:
+    reverse_prefixes = {
+        "model.diffusion_model.": "",
+        "model.diffusion_model.adaln_single.": "video_adaln_single.",
+        "model.diffusion_model.prompt_adaln_single.": "video_prompt_adaln_single.",
+    }
+    for checkpoint_prefix, local_prefix in sorted(reverse_prefixes.items(), key=lambda item: len(item[0]), reverse=True):
+        if checkpoint_key.startswith(checkpoint_prefix):
+            candidate = f"{local_prefix}{checkpoint_key[len(checkpoint_prefix):]}"
+            if candidate in local_keys:
+                return candidate
+            input_candidate = f"input_projection.{candidate}"
+            if input_candidate in local_keys:
+                return input_candidate
+            output_candidate = f"output_processor.{candidate}"
+            if output_candidate in local_keys:
+                return output_candidate
+    return checkpoint_key if checkpoint_key in local_keys else None
+
+
 def load_ltxav_model_state_dict(
     model: LTXAVModel,
     checkpoint_path: str | Path,
@@ -352,6 +382,52 @@ def load_ltxav_model_weights_streaming(
             _assign_state_tensor(model, local_key, handle.get_tensor(checkpoint_key), assign=assign)
             loaded += 1
     return LTXAVModelLoadReport(loaded=loaded, missing=missing, unexpected=())
+
+
+def apply_lora_to_ltxav_model(
+    model: LTXAVModel,
+    *,
+    lora_path: str | Path,
+    manifest: LoRAManifest,
+    strength: float,
+    strict: bool = False,
+) -> LTXAVModelLoRAReport:
+    local_keys = set(model.state_dict().keys())
+    applied: list[str] = []
+    skipped: list[str] = []
+    with safe_open(str(lora_path), framework="pt", device="cpu") as handle:
+        for pair in manifest.pairs:
+            local_key = None
+            for candidate in target_key_candidates(pair.target_key):
+                local_key = ltxav_model_local_key(candidate, local_keys)
+                if local_key is not None:
+                    break
+            if local_key is None:
+                skipped.append(pair.target_key)
+                continue
+            _, _, target, _ = _resolve_state_target(model, local_key)
+            if target.is_meta:
+                raise ValueError(f"cannot apply LoRA to meta tensor: {local_key}")
+            lora_a = handle.get_tensor(pair.lora_a_key).to(device=target.device, dtype=torch.float32)
+            lora_b = handle.get_tensor(pair.lora_b_key).to(device=target.device, dtype=torch.float32)
+            delta = lora_pair_delta(
+                lora_a,
+                lora_b,
+                target.shape,
+                alpha=pair.alpha,
+                strength=strength,
+            ).to(dtype=target.dtype)
+            with torch.no_grad():
+                target.add_(delta)
+            applied.append(local_key)
+    if strict and skipped:
+        raise KeyError(f"LoRA targets not found in LTXAV model: {skipped[:8]}")
+    return LTXAVModelLoRAReport(
+        matched=len(applied),
+        skipped=len(skipped),
+        applied_keys=tuple(applied),
+        skipped_targets=tuple(skipped),
+    )
 
 
 def load_ltxav_model_weights(
