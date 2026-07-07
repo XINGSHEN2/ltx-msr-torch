@@ -15,10 +15,13 @@ from .ltxav_transformer import inspect_ltxav_transformer_manifest
 from .ltx_vae import (
     build_ltx_audio_vae_from_checkpoint,
     build_ltx_video_vae_from_checkpoint,
+    load_ltxav_decoders_from_checkpoint,
     load_ltx_audio_vae_state_dict,
     load_ltx_video_vae_state_dict,
     missing_ltx_vae_keys,
 )
+from .ltxav_denoiser import LTXAVDenoiser, sample_ltxav_euler
+from .ltxav_pipeline import decode_ltxav_latents
 from .lora_apply import match_lora_targets
 from .lora_loader import inspect_lora_manifest, resolve_lora_path
 from .model_inspect import inspect_workflow_model_headers
@@ -152,6 +155,10 @@ def main(argv: list[str] | None = None) -> int:
         "inspect-ltxav-decoders",
         help="Build local torch LTX video/audio decoders and verify checkpoint key coverage.",
     )
+    inspect_ltxav_pipeline = subparsers.add_parser(
+        "inspect-ltxav-pipeline",
+        help="Verify the local torch LTXAV model, sampler adapter, and decoders can be wired together.",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "build-reference":
@@ -188,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_ltxav_model()
     if args.command == "inspect-ltxav-decoders":
         return _inspect_ltxav_decoders()
+    if args.command == "inspect-ltxav-pipeline":
+        return _inspect_ltxav_pipeline()
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -524,4 +533,34 @@ def _inspect_ltxav_decoders() -> int:
         print(f"ltxav_video_vae_missing_keys={list(video_missing[:8])}")
     if audio_missing:
         print(f"ltxav_audio_vae_missing_keys={list(audio_missing[:8])}")
+    return 0
+
+
+def _inspect_ltxav_pipeline() -> int:
+    import torch
+
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    model = create_ltxav_model_from_checkpoint(state.model_paths.checkpoint, device="meta")
+    decoders = load_ltxav_decoders_from_checkpoint(state.model_paths.checkpoint, device="cpu")
+    video_latents = torch.zeros((1, 128, 1, 1, 1), dtype=torch.float32)
+    audio_latents = torch.zeros((1, 8, 1, 16), dtype=torch.float32)
+    context = torch.zeros((1, 1, model.config.video_context_dim + model.config.audio_context_dim), dtype=torch.float32)
+    attention_mask = torch.ones((1, 1), dtype=torch.long)
+    denoiser = LTXAVDenoiser(
+        model=model,
+        context=context,
+        attention_mask=attention_mask,
+        frame_rate=float(default_workflow_config().latent.frame_rate),
+        transformer_options={"run_vx": False, "run_ax": False, "a2v_cross_attn": False, "v2a_cross_attn": False},
+    )
+    print(f"ltxav_pipeline_model_layers={model.config.num_layers}")
+    print(f"ltxav_pipeline_model_is_meta={model.input_projection.patchify_proj.weight.is_meta}")
+    print(f"ltxav_pipeline_video_decoder_loaded={not decoders.video_vae.decoder.conv_in.conv.weight.is_meta}")
+    print(f"ltxav_pipeline_audio_decoder_loaded={decoders.audio_vae.output_sample_rate == 48000}")
+    print(f"ltxav_pipeline_video_latent_shape={tuple(video_latents.shape)}")
+    print(f"ltxav_pipeline_audio_latent_shape={tuple(audio_latents.shape)}")
+    print(f"ltxav_pipeline_context_shape={tuple(context.shape)}")
+    print(f"ltxav_pipeline_denoiser_type={denoiser.__class__.__name__}")
+    print(f"ltxav_pipeline_sample_entry={sample_ltxav_euler.__name__}")
+    print(f"ltxav_pipeline_decode_entry={decode_ltxav_latents.__name__}")
     return 0
