@@ -12,6 +12,13 @@ from .local_state import build_low_level_state
 from .lora_apply import target_key_candidates
 from .ltxav_model import create_ltxav_model_from_checkpoint, ltxav_model_local_key, missing_ltxav_model_checkpoint_keys
 from .ltxav_transformer import inspect_ltxav_transformer_manifest
+from .ltx_vae import (
+    build_ltx_audio_vae_from_checkpoint,
+    build_ltx_video_vae_from_checkpoint,
+    load_ltx_audio_vae_state_dict,
+    load_ltx_video_vae_state_dict,
+    missing_ltx_vae_keys,
+)
 from .lora_apply import match_lora_targets
 from .lora_loader import inspect_lora_manifest, resolve_lora_path
 from .model_inspect import inspect_workflow_model_headers
@@ -141,6 +148,10 @@ def main(argv: list[str] | None = None) -> int:
         "inspect-ltxav-model",
         help="Build the local torch LTXAV model on meta and verify checkpoint key coverage.",
     )
+    inspect_ltxav_decoders = subparsers.add_parser(
+        "inspect-ltxav-decoders",
+        help="Build local torch LTX video/audio decoders and verify checkpoint key coverage.",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "build-reference":
@@ -175,6 +186,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_ltxav_transformer()
     if args.command == "inspect-ltxav-model":
         return _inspect_ltxav_model()
+    if args.command == "inspect-ltxav-decoders":
+        return _inspect_ltxav_decoders()
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -487,4 +500,28 @@ def _inspect_ltxav_model() -> int:
     print(f"ltxav_model_lora_pair_count={lora_manifest.pair_count}")
     print(f"ltxav_model_lora_mapped_target_count={mapped_lora_targets}")
     print(f"ltxav_model_first_weight_is_meta={model.input_projection.patchify_proj.weight.is_meta}")
+    return 0
+
+
+def _inspect_ltxav_decoders() -> int:
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    video_vae = build_ltx_video_vae_from_checkpoint(state.model_paths.checkpoint, device="cpu")
+    audio_vae = build_ltx_audio_vae_from_checkpoint(state.model_paths.checkpoint, device="cpu")
+    video_state = load_ltx_video_vae_state_dict(state.model_paths.checkpoint)
+    audio_state = load_ltx_audio_vae_state_dict(state.model_paths.checkpoint)
+    video_missing = missing_ltx_vae_keys(video_vae, video_state)
+    audio_missing = missing_ltx_vae_keys(audio_vae, audio_state)
+    print(f"ltxav_decoders_checkpoint={state.model_paths.checkpoint}")
+    print(f"ltxav_video_vae_state_key_count={len(video_vae.state_dict())}")
+    print(f"ltxav_video_vae_missing_key_count={len(video_missing)}")
+    print(f"ltxav_audio_vae_state_key_count={len(audio_vae.state_dict())}")
+    print(f"ltxav_audio_vae_missing_key_count={len(audio_missing)}")
+    print(f"ltxav_audio_vae_sample_rate={audio_vae.sample_rate}")
+    print(f"ltxav_audio_vae_output_sample_rate={audio_vae.output_sample_rate}")
+    print(f"ltxav_audio_vae_latent_channels={audio_vae.latent_channels}")
+    print(f"ltxav_audio_vae_latent_frequency_bins={audio_vae.latent_frequency_bins}")
+    if video_missing:
+        print(f"ltxav_video_vae_missing_keys={list(video_missing[:8])}")
+    if audio_missing:
+        print(f"ltxav_audio_vae_missing_keys={list(audio_missing[:8])}")
     return 0
