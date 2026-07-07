@@ -47,6 +47,7 @@ from .text_conditioning import (
 )
 from .text_projection import build_text_projection_from_checkpoint
 from .vae_sections import inspect_vae_section
+from .video_io import write_video_mp4
 from .workflow_extract import extract_workflow_config
 from .workflow_config import default_workflow_config
 
@@ -208,6 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     smoke_ltxav_sampling.add_argument("--decode", action="store_true")
     smoke_ltxav_sampling.add_argument("--apply-lora", action="store_true")
     smoke_ltxav_sampling.add_argument("--enable-av-cross", action="store_true")
+    smoke_ltxav_sampling.add_argument("--output-video", default=None)
 
     args = parser.parse_args(argv)
     if args.command == "build-reference":
@@ -881,6 +883,13 @@ def _smoke_ltxav_sampling(args: argparse.Namespace) -> int:
     if output.decoded is not None:
         print(f"ltxav_sampling_smoke_decoded_video_shape={tuple(output.decoded.video.shape)}")
         print(f"ltxav_sampling_smoke_decoded_video_finite={bool(torch.isfinite(output.decoded.video).all().item())}")
+        if args.output_video:
+            output_path = write_video_mp4(
+                output.decoded.video,
+                args.output_video,
+                fps=float(default_workflow_config().latent.frame_rate),
+            )
+            print(f"ltxav_sampling_smoke_output_video={output_path}")
         if output.decoded.audio is not None:
             print(f"ltxav_sampling_smoke_decoded_audio_shape={tuple(output.decoded.audio.shape)}")
             print(f"ltxav_sampling_smoke_decoded_audio_finite={bool(torch.isfinite(output.decoded.audio).all().item())}")
