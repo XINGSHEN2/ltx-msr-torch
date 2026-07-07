@@ -9,7 +9,8 @@ from .comfy_client import load_api_prompt, queue_prompt, wait_for_history
 from .gemma_tokenizer import GemmaTokenizer
 from .gemma_text_model import inspect_gemma_text_model_compatibility, load_gemma3_text_config
 from .local_state import build_low_level_state
-from .ltxav_model import create_ltxav_model_from_checkpoint, missing_ltxav_model_checkpoint_keys
+from .lora_apply import target_key_candidates
+from .ltxav_model import create_ltxav_model_from_checkpoint, ltxav_model_local_key, missing_ltxav_model_checkpoint_keys
 from .ltxav_transformer import inspect_ltxav_transformer_manifest
 from .lora_apply import match_lora_targets
 from .lora_loader import inspect_lora_manifest, resolve_lora_path
@@ -465,6 +466,14 @@ def _inspect_ltxav_model() -> int:
     state = build_low_level_state(default_workflow_config(), device="cpu")
     model = create_ltxav_model_from_checkpoint(state.model_paths.checkpoint, device="meta")
     missing = missing_ltxav_model_checkpoint_keys(model, state.model_paths.checkpoint)
+    lora_path = resolve_lora_path(default_workflow_config().model.lora)
+    lora_manifest = inspect_lora_manifest(lora_path)
+    local_keys = set(model.state_dict())
+    mapped_lora_targets = sum(
+        1
+        for pair in lora_manifest.pairs
+        if any(ltxav_model_local_key(candidate, local_keys) is not None for candidate in target_key_candidates(pair.target_key))
+    )
     config = model.config
     print(f"ltxav_model_checkpoint={state.model_paths.checkpoint}")
     print(f"ltxav_model_num_layers={config.num_layers}")
@@ -474,5 +483,8 @@ def _inspect_ltxav_model() -> int:
     print(f"ltxav_model_missing_checkpoint_key_count={len(missing)}")
     if missing:
         print(f"ltxav_model_missing_checkpoint_keys={list(missing[:8])}")
+    print(f"ltxav_model_lora_path={lora_path}")
+    print(f"ltxav_model_lora_pair_count={lora_manifest.pair_count}")
+    print(f"ltxav_model_lora_mapped_target_count={mapped_lora_targets}")
     print(f"ltxav_model_first_weight_is_meta={model.input_projection.patchify_proj.weight.is_meta}")
     return 0
