@@ -56,3 +56,14 @@ def test_load_ltxav_decoders_from_checkpoint_strict_loads_weights():
 
     assert tuple(decoders.video_vae.decoder.conv_in.conv.weight.shape) == (1024, 128, 3, 3, 3)
     assert decoders.audio_vae.output_sample_rate == 48000
+
+
+def test_audio_vae_decode_smoke_runs_vocoder_on_small_latents():
+    paths = resolve_workflow_model_paths(default_workflow_config())
+    decoders = load_ltxav_decoders_from_checkpoint(paths.checkpoint, device="cpu")
+    latents = torch.zeros((1, 8, 4, 16), dtype=torch.float32)
+
+    waveform = decoders.audio_vae.decode(latents)
+
+    assert waveform.shape == (1, 2, 6240)
+    assert waveform.dtype == torch.float32
