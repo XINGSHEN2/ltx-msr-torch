@@ -221,3 +221,35 @@ def load_embeddings_connector_state_dict(
         keys = tuple(key for key in handle.keys() if key.startswith(prefix))
     raw = load_safetensors_subset(checkpoint_path, keys, device=device)
     return {key[len(prefix) :]: value for key, value in raw.items()}
+
+
+def build_embeddings_connector_from_checkpoint(
+    checkpoint_path: str | Path,
+    kind: str,
+    *,
+    dtype: torch.dtype | None = None,
+    device: torch.device | str | None = "cpu",
+    strict: bool = True,
+) -> Embeddings1DConnector:
+    if kind == "video":
+        attention_head_dim = 128
+    elif kind == "audio":
+        attention_head_dim = 64
+    else:
+        raise ValueError("kind must be 'video' or 'audio'")
+    state_dict = load_embeddings_connector_state_dict(checkpoint_path, kind, device=device or "cpu")
+    resolved_dtype = dtype or state_dict["learnable_registers"].dtype
+    connector = Embeddings1DConnector(
+        attention_head_dim=attention_head_dim,
+        num_attention_heads=32,
+        num_layers=8,
+        num_learnable_registers=128,
+        apply_gated_attention=True,
+        split_rope=True,
+        double_precision_rope=True,
+        dtype=resolved_dtype,
+        device=device,
+    )
+    connector.load_state_dict(state_dict, strict=strict)
+    connector.eval()
+    return connector

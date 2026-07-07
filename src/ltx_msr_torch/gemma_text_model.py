@@ -48,6 +48,7 @@ def build_empty_gemma3_text_model(
     config: Gemma3TextConfig | None = None,
     *,
     device: torch.device | str = "meta",
+    dtype: torch.dtype | None = None,
     num_layers: int | None = None,
 ) -> Gemma3TextModel:
     resolved_config = config or load_gemma3_text_config()
@@ -58,8 +59,15 @@ def build_empty_gemma3_text_model(
         if "layer_types" in data and data["layer_types"] is not None:
             data["layer_types"] = data["layer_types"][:num_layers]
         resolved_config = Gemma3TextConfig(**{**data, "num_hidden_layers": num_layers})
-    with torch.device(device):
-        model = Gemma3TextModel(resolved_config)
+    original_dtype = torch.get_default_dtype()
+    if dtype is not None:
+        torch.set_default_dtype(dtype)
+    try:
+        with torch.device(device):
+            model = Gemma3TextModel(resolved_config)
+    finally:
+        if dtype is not None:
+            torch.set_default_dtype(original_dtype)
     model.eval()
     return model
 

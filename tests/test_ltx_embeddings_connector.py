@@ -8,6 +8,7 @@ import torch
 from ltx_msr_torch.ltx_embeddings_connector import (
     BasicTransformerBlock1D,
     Embeddings1DConnector,
+    build_embeddings_connector_from_checkpoint,
     load_embeddings_connector_state_dict,
 )
 from ltx_msr_torch.model_paths import resolve_workflow_model_paths
@@ -139,6 +140,19 @@ def test_load_embeddings_connector_state_dict_reads_workflow_shapes():
     assert video["transformer_1d_blocks.0.attn1.to_q.weight"].shape == (4096, 4096)
     assert audio["transformer_1d_blocks.0.attn1.to_q.weight"].shape == (2048, 2048)
     assert video["learnable_registers"].dtype == torch.bfloat16
+
+
+def test_build_embeddings_connectors_from_checkpoint_strict_loads_weights():
+    paths = resolve_workflow_model_paths(default_workflow_config())
+
+    video = build_embeddings_connector_from_checkpoint(paths.checkpoint, "video", device="cpu")
+    audio = build_embeddings_connector_from_checkpoint(paths.checkpoint, "audio", device="cpu")
+
+    assert video.config.inner_dim == 4096
+    assert audio.config.inner_dim == 2048
+    assert tuple(video.learnable_registers.shape) == (128, 4096)
+    assert tuple(audio.learnable_registers.shape) == (128, 2048)
+    assert video.learnable_registers.dtype == torch.bfloat16
 
 
 def test_embeddings_connector_meta_shapes_match_workflow_video_audio():

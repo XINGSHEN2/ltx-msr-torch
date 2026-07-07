@@ -15,6 +15,7 @@ from .gemma_text_model import (
 )
 from .local_state import build_low_level_state
 from .lora_apply import target_key_candidates
+from .ltx_embeddings_connector import build_embeddings_connector_from_checkpoint
 from .ltxav_model import (
     create_ltxav_model_from_checkpoint,
     load_ltxav_model_weights_streaming,
@@ -41,6 +42,7 @@ from .text_encoder_sections import inspect_text_encoder_section
 from .text_conditioning import (
     build_text_conditioning_inputs_from_plan,
     attention_mask_tensor,
+    connect_ltxav_text_embeddings,
 )
 from .text_projection import build_text_projection_from_checkpoint
 from .vae_sections import inspect_vae_section
@@ -159,7 +161,17 @@ def main(argv: list[str] | None = None) -> int:
     smoke_gemma_text_forward.add_argument("--layers", type=int, default=1)
     smoke_gemma_text_forward.add_argument("--tokens", type=int, default=8)
     smoke_gemma_text_forward.add_argument("--device", default="cpu")
+    smoke_gemma_text_forward.add_argument("--dtype", choices=("bf16", "fp32"), default="bf16")
     smoke_gemma_text_forward.add_argument("--case-dir", default="sample_cases/validition_v1_01")
+    smoke_text_conditioning = subparsers.add_parser(
+        "smoke-text-conditioning",
+        help="Run Gemma, text projection, and LTXAV embedding connectors with real workflow weights.",
+    )
+    smoke_text_conditioning.add_argument("--layers", type=int, default=48)
+    smoke_text_conditioning.add_argument("--min-length", type=int, default=128)
+    smoke_text_conditioning.add_argument("--device", default="cpu")
+    smoke_text_conditioning.add_argument("--dtype", choices=("bf16", "fp32"), default="bf16")
+    smoke_text_conditioning.add_argument("--case-dir", default="sample_cases/validition_v1_01")
 
     inspect_transformer = subparsers.add_parser(
         "inspect-ltxav-transformer",
@@ -217,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_gemma_text_model()
     if args.command == "smoke-gemma-text-forward":
         return _smoke_gemma_text_forward(args)
+    if args.command == "smoke-text-conditioning":
+        return _smoke_text_conditioning(args)
     if args.command == "inspect-ltxav-transformer":
         return _inspect_ltxav_transformer()
     if args.command == "inspect-ltxav-model":
@@ -505,7 +519,8 @@ def _smoke_gemma_text_forward(args: argparse.Namespace) -> int:
     if not token_ids:
         raise ValueError("prompt produced no Gemma token ids")
     device = torch.device(args.device)
-    model = build_empty_gemma3_text_model(device=device, num_layers=args.layers)
+    dtype = _torch_dtype_from_cli(args.dtype)
+    model = build_empty_gemma3_text_model(device=device, dtype=dtype, num_layers=args.layers)
     report = load_gemma_text_model_weights_streaming(
         model,
         state.model_paths.text_encoder,
@@ -530,6 +545,77 @@ def _smoke_gemma_text_forward(args: argparse.Namespace) -> int:
     print(f"gemma_forward_smoke_hidden_state_count={len(hidden_states)}")
     print(f"gemma_forward_smoke_last_hidden_shape={tuple(last_hidden.shape)}")
     print(f"gemma_forward_smoke_last_hidden_finite={bool(torch.isfinite(last_hidden).all().item())}")
+    return 0
+
+
+def _smoke_text_conditioning(args: argparse.Namespace) -> int:
+    import math
+    import torch
+
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    global_prompt, local_prompts = parse_reference_prompt_file(Path(args.case_dir) / "prompt.txt")
+    tokenizer = GemmaTokenizer.from_config_paths()
+    relay_plan = tokenizer.plan_prompt_relay_tokens(
+        global_prompt=global_prompt,
+        local_prompts=local_prompts,
+    )
+    minimum = max(args.min_length, math.ceil(len(relay_plan.input_ids) / 128) * 128)
+    token_plan = tokenizer.tokenize_with_weights(relay_plan.full_prompt, min_length=minimum)
+    token_ids = list(token_plan.padded_input_ids)
+    token_mask = list(token_plan.attention_mask)
+    remainder = len(token_ids) % 128
+    if remainder:
+        pad_count = 128 - remainder
+        token_ids = [tokenizer.pad_token_id] * pad_count + token_ids
+        token_mask = [0] * pad_count + token_mask
+    device = torch.device(args.device)
+    dtype = _torch_dtype_from_cli(args.dtype)
+    model = build_empty_gemma3_text_model(device=device, dtype=dtype, num_layers=args.layers)
+    report = load_gemma_text_model_weights_streaming(
+        model,
+        state.model_paths.text_encoder,
+        device=device,
+    )
+    input_ids = torch.tensor([token_ids], device=device, dtype=torch.long)
+    attention_mask = torch.tensor([token_mask], device=device, dtype=torch.long)
+    with torch.inference_mode():
+        gemma_output = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            output_hidden_states=True,
+        )
+    all_layer_hidden = torch.stack(gemma_output.hidden_states, dim=1)
+    projection = build_text_projection_from_checkpoint(state.model_paths.checkpoint, device=device)
+    conditioning = projection(all_layer_hidden).to(dtype=torch.float32)
+    video_connector = build_embeddings_connector_from_checkpoint(
+        state.model_paths.checkpoint,
+        "video",
+        dtype=dtype,
+        device=device,
+    )
+    audio_connector = build_embeddings_connector_from_checkpoint(
+        state.model_paths.checkpoint,
+        "audio",
+        dtype=dtype,
+        device=device,
+    )
+    context_output = connect_ltxav_text_embeddings(
+        conditioning.to(device=device, dtype=dtype),
+        attention_mask=attention_mask.to(device=device),
+        video_connector=video_connector,
+        audio_connector=audio_connector,
+    )
+    print(f"text_conditioning_smoke_checkpoint={state.model_paths.checkpoint}")
+    print(f"text_conditioning_smoke_text_encoder={state.model_paths.text_encoder}")
+    print(f"text_conditioning_smoke_gemma_layers={model.config.num_hidden_layers}")
+    print(f"text_conditioning_smoke_gemma_loaded_key_count={report.loaded}")
+    print(f"text_conditioning_smoke_token_count={input_ids.shape[1]}")
+    print(f"text_conditioning_smoke_real_token_count={sum(token_mask)}")
+    print(f"text_conditioning_smoke_hidden_shape={tuple(all_layer_hidden.shape)}")
+    print(f"text_conditioning_smoke_conditioning_shape={tuple(conditioning.shape)}")
+    print(f"text_conditioning_smoke_context_shape={tuple(context_output.context.shape)}")
+    print(f"text_conditioning_smoke_attention_mask_shape={tuple(context_output.attention_mask.shape)}")
+    print(f"text_conditioning_smoke_context_finite={bool(torch.isfinite(context_output.context).all().item())}")
     return 0
 
 
