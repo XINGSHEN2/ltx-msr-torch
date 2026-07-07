@@ -32,7 +32,7 @@ from .ltx_vae import (
     missing_ltx_vae_keys,
 )
 from .ltxav_denoiser import LTXAVDenoiser, sample_ltxav_euler
-from .ltxav_pipeline import decode_ltxav_latents
+from .ltxav_pipeline import decode_ltxav_latents, run_ltxav_sample_decode
 from .lora_apply import match_lora_targets
 from .lora_loader import inspect_lora_manifest, resolve_lora_path
 from .model_inspect import inspect_workflow_model_headers
@@ -197,6 +197,15 @@ def main(argv: list[str] | None = None) -> int:
     smoke_ltxav_model_forward.add_argument("--device", default="cpu")
     smoke_ltxav_model_forward.add_argument("--dtype", choices=("bf16", "fp16", "fp32"), default="bf16")
     smoke_ltxav_model_forward.add_argument("--enable-av-cross", action="store_true")
+    smoke_ltxav_sampling = subparsers.add_parser(
+        "smoke-ltxav-sampling",
+        help="Run minimal pure-torch LTXAV sampling with real transformer weights.",
+    )
+    smoke_ltxav_sampling.add_argument("--layers", type=int, default=1)
+    smoke_ltxav_sampling.add_argument("--device", default="cpu")
+    smoke_ltxav_sampling.add_argument("--dtype", choices=("bf16", "fp16", "fp32"), default="bf16")
+    smoke_ltxav_sampling.add_argument("--decode", action="store_true")
+    smoke_ltxav_sampling.add_argument("--enable-av-cross", action="store_true")
 
     args = parser.parse_args(argv)
     if args.command == "build-reference":
@@ -241,6 +250,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_ltxav_pipeline()
     if args.command == "smoke-ltxav-model-forward":
         return _smoke_ltxav_model_forward(args)
+    if args.command == "smoke-ltxav-sampling":
+        return _smoke_ltxav_sampling(args)
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -793,4 +804,68 @@ def _smoke_ltxav_model_forward(args: argparse.Namespace) -> int:
     if audio_output is not None:
         print(f"ltxav_forward_smoke_audio_shape={tuple(audio_output.shape)}")
         print(f"ltxav_forward_smoke_audio_finite={bool(torch.isfinite(audio_output).all().item())}")
+    return 0
+
+
+def _smoke_ltxav_sampling(args: argparse.Namespace) -> int:
+    import torch
+
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    dtype = _torch_dtype_from_cli(args.dtype)
+    device = torch.device(args.device)
+    model = create_ltxav_model_from_checkpoint(
+        state.model_paths.checkpoint,
+        dtype=dtype,
+        device="meta",
+        num_layers=args.layers,
+    )
+    report = load_ltxav_model_weights_streaming(
+        model,
+        state.model_paths.checkpoint,
+        device=device,
+        assign=True,
+    )
+    model.eval()
+    video_latents = torch.zeros((1, model.config.video_in_channels, 1, 1, 1), device=device, dtype=dtype)
+    audio_latents = torch.zeros((1, model.config.audio_channels, 1, model.config.audio_frequency), device=device, dtype=dtype)
+    context = torch.zeros((1, 1, model.config.video_context_dim + model.config.audio_context_dim), device=device, dtype=dtype)
+    attention_mask = torch.ones((1, 1), device=device, dtype=torch.long)
+    sigmas = torch.tensor([1.0, 0.0], device=device, dtype=dtype)
+    video_vae = None
+    audio_vae = None
+    if args.decode:
+        decoders = load_ltxav_decoders_from_checkpoint(state.model_paths.checkpoint, device=device)
+        video_vae = decoders.video_vae
+        audio_vae = decoders.audio_vae
+    output = run_ltxav_sample_decode(
+        model=model,
+        video_latents=video_latents,
+        audio_latents=audio_latents,
+        context=context,
+        attention_mask=attention_mask,
+        sigmas=sigmas,
+        frame_rate=float(default_workflow_config().latent.frame_rate),
+        video_vae=video_vae,
+        audio_vae=audio_vae,
+        transformer_options={
+            "a2v_cross_attn": bool(args.enable_av_cross),
+            "v2a_cross_attn": bool(args.enable_av_cross),
+        },
+    )
+    print(f"ltxav_sampling_smoke_checkpoint={state.model_paths.checkpoint}")
+    print(f"ltxav_sampling_smoke_layers={model.config.num_layers}")
+    print(f"ltxav_sampling_smoke_loaded_key_count={report.loaded}")
+    print(f"ltxav_sampling_smoke_device={device}")
+    print(f"ltxav_sampling_smoke_dtype={dtype}")
+    print(f"ltxav_sampling_smoke_decode={bool(args.decode)}")
+    print(f"ltxav_sampling_smoke_video_latent_shape={tuple(output.video_latents.shape)}")
+    print(f"ltxav_sampling_smoke_audio_latent_shape={tuple(output.audio_latents.shape)}")
+    print(f"ltxav_sampling_smoke_video_finite={bool(torch.isfinite(output.video_latents).all().item())}")
+    print(f"ltxav_sampling_smoke_audio_finite={bool(torch.isfinite(output.audio_latents).all().item())}")
+    if output.decoded is not None:
+        print(f"ltxav_sampling_smoke_decoded_video_shape={tuple(output.decoded.video.shape)}")
+        print(f"ltxav_sampling_smoke_decoded_video_finite={bool(torch.isfinite(output.decoded.video).all().item())}")
+        if output.decoded.audio is not None:
+            print(f"ltxav_sampling_smoke_decoded_audio_shape={tuple(output.decoded.audio.shape)}")
+            print(f"ltxav_sampling_smoke_decoded_audio_finite={bool(torch.isfinite(output.decoded.audio).all().item())}")
     return 0
