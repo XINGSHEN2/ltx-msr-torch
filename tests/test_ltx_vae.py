@@ -4,14 +4,27 @@ from ltx_msr_torch.ltx_vae import (
     build_ltx_audio_vae_from_checkpoint,
     build_ltx_video_vae_from_checkpoint,
     decode_ltx_video_latents,
+    encode_ltx_video_pixels,
     load_checkpoint_config,
     load_ltxav_decoders_from_checkpoint,
     load_ltx_audio_vae_state_dict,
     load_ltx_video_vae_state_dict,
+    load_ltx_video_vae_weights,
     missing_ltx_vae_keys,
 )
 from ltx_msr_torch.model_paths import resolve_workflow_model_paths
 from ltx_msr_torch.workflow_config import default_workflow_config
+
+
+class _FakeVideoEncoder(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.zeros((), dtype=torch.float32))
+        self.seen = None
+
+    def encode(self, pixels):
+        self.seen = pixels
+        return pixels.mean(dim=(3, 4), keepdim=True)
 
 
 def test_load_checkpoint_config_contains_video_audio_and_vocoder_sections():
@@ -57,6 +70,30 @@ def test_load_ltxav_decoders_from_checkpoint_strict_loads_weights():
 
     assert tuple(decoders.video_vae.decoder.conv_in.conv.weight.shape) == (1024, 128, 3, 3, 3)
     assert decoders.audio_vae.output_sample_rate == 48000
+
+
+def test_encode_ltx_video_pixels_uses_comfy_video_vae_layout_and_range():
+    vae = _FakeVideoEncoder()
+    pixels = torch.ones((2, 4, 5, 3), dtype=torch.float32)
+
+    latents = encode_ltx_video_pixels(vae, pixels)
+
+    assert vae.seen.shape == (1, 3, 2, 4, 5)
+    assert torch.equal(vae.seen, torch.ones_like(vae.seen))
+    assert latents.shape == (1, 3, 2, 1, 1)
+
+
+def test_video_vae_encode_smoke_runs_on_small_pixels():
+    paths = resolve_workflow_model_paths(default_workflow_config())
+    video_vae = build_ltx_video_vae_from_checkpoint(paths.checkpoint, device="cpu")
+    load_ltx_video_vae_weights(video_vae, paths.checkpoint, device="cpu")
+    pixels = torch.zeros((9, 32, 32, 3), dtype=torch.float32)
+
+    latents = encode_ltx_video_pixels(video_vae, pixels)
+
+    assert latents.shape == (1, 128, 2, 1, 1)
+    assert latents.dtype == torch.float32
+    assert torch.isfinite(latents).all()
 
 
 def test_video_vae_decode_smoke_runs_on_small_latents():

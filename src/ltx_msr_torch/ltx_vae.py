@@ -160,5 +160,17 @@ def decode_ltx_video_latents(video_vae: torch.nn.Module, latents: torch.Tensor) 
 
 
 @torch.no_grad()
+def encode_ltx_video_pixels(video_vae: torch.nn.Module, pixels: torch.Tensor) -> torch.Tensor:
+    if pixels.ndim != 4 or pixels.shape[-1] != 3:
+        raise ValueError(f"expected pixels [T,H,W,3], got {tuple(pixels.shape)}")
+    reference = next(video_vae.parameters(), None) if isinstance(video_vae, torch.nn.Module) else None
+    device = reference.device if reference is not None else pixels.device
+    dtype = reference.dtype if reference is not None else pixels.dtype
+    model_input = pixels.movedim(-1, 1).movedim(1, 0).unsqueeze(0)
+    model_input = (model_input * 2.0 - 1.0).to(device=device, dtype=dtype)
+    return video_vae.encode(model_input)
+
+
+@torch.no_grad()
 def decode_ltx_audio_latents(audio_vae: torch.nn.Module, latents: torch.Tensor) -> torch.Tensor:
     return audio_vae.decode(latents)

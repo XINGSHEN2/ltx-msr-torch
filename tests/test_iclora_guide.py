@@ -1,6 +1,22 @@
 import torch
 
-from ltx_msr_torch.iclora_guide import append_iclora_keyframe, plan_iclora_video_guide
+from ltx_msr_torch.iclora_guide import (
+    append_iclora_keyframe,
+    prepare_and_append_iclora_video_guide,
+    plan_iclora_video_guide,
+)
+
+
+class _FakeGuideVideoVAE(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.zeros((), dtype=torch.float32))
+        self.seen = None
+
+    def encode(self, pixels):
+        self.seen = pixels
+        batch, _, frames, height, width = pixels.shape
+        return torch.ones(batch, 128, ((frames - 1) // 8) + 1, height // 32, width // 32)
 
 
 def test_plan_iclora_video_guide_matches_project_sample_shape():
@@ -126,3 +142,22 @@ def test_append_iclora_keyframe_aligns_nonzero_frame_index():
     assert result.frame_idx == 9
     assert result.latent_idx == 2
     assert result.positive[0][1]["keyframe_idxs"][0, 0, 0, 0].item() == 9
+
+
+def test_prepare_and_append_iclora_video_guide_encodes_and_appends():
+    vae = _FakeGuideVideoVAE()
+    result = prepare_and_append_iclora_video_guide(
+        video_vae=vae,
+        positive=[[torch.zeros(1, 2, 4), {}]],
+        negative=[[torch.zeros(1, 2, 4), {}]],
+        latent={"samples": torch.zeros(1, 128, 8, 2, 2)},
+        image=torch.zeros(9, 20, 30, 3),
+        frame_idx=0,
+        strength=1.0,
+    )
+
+    assert vae.seen.shape == (1, 3, 9, 64, 64)
+    assert result.encoded_pixels.shape == (9, 64, 64, 3)
+    assert result.guide_latent.shape == (1, 128, 2, 2, 2)
+    assert result.append.latent["samples"].shape == (1, 128, 10, 2, 2)
+    assert result.append.tokens_added == 8

@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from typing import Sequence
 
 import torch
+import torch.nn.functional as F
 
 from .ltx_patchify import latent_to_pixel_coords, symmetric_patchify_video
+from .ltx_vae import encode_ltx_video_pixels
 from .torch_nodes import conditioning_set_values
 
 
@@ -45,6 +47,13 @@ class ICLoRAGuideAppendResult:
     guide_orig_shape: tuple[int, int, int]
     frame_idx: int
     latent_idx: int
+
+
+@dataclass(frozen=True)
+class ICLoRAPreparedGuideResult:
+    encoded_pixels: torch.Tensor
+    guide_latent: torch.Tensor
+    append: ICLoRAGuideAppendResult
 
 
 def plan_iclora_video_guide(
@@ -288,6 +297,75 @@ def append_iclora_keyframe(
         frame_idx=resolved_frame_idx,
         latent_idx=latent_idx,
     )
+
+
+def prepare_and_append_iclora_video_guide(
+    *,
+    video_vae: torch.nn.Module,
+    positive: Conditioning,
+    negative: Conditioning,
+    latent: dict[str, torch.Tensor],
+    image: torch.Tensor,
+    frame_idx: int,
+    strength: float,
+    latent_downscale_factor: float = 1.0,
+    crop: str = "center",
+    scale_factors: ScaleFactors = (8, 32, 32),
+) -> ICLoRAPreparedGuideResult:
+    latent_image = latent["samples"]
+    plan = plan_iclora_video_guide(
+        latent_shape=latent_image.shape,
+        image_frame_count=image.shape[0],
+        scale_factors=scale_factors,
+        frame_idx=frame_idx,
+        latent_downscale_factor=latent_downscale_factor,
+        crop=crop,
+    )
+    pixels = image[: plan.num_frames_to_keep]
+    if not plan.causal_fix:
+        pixels = torch.cat([pixels[:1], pixels], dim=0)
+    resized = resize_video_pixels(
+        pixels,
+        width=plan.target_width,
+        height=plan.target_height,
+        crop=crop,
+    )
+    guide_latent = encode_ltx_video_pixels(video_vae, resized)
+    if not plan.causal_fix:
+        guide_latent = guide_latent[:, :, 1:, :, :]
+        resized = resized[1:]
+    append = append_iclora_keyframe(
+        positive=positive,
+        negative=negative,
+        latent=latent,
+        guiding_latent=guide_latent,
+        frame_idx=plan.frame_idx,
+        strength=strength,
+        scale_factors=scale_factors,
+        latent_downscale_factor=latent_downscale_factor,
+        causal_fix=plan.causal_fix,
+    )
+    return ICLoRAPreparedGuideResult(
+        encoded_pixels=resized,
+        guide_latent=guide_latent,
+        append=append,
+    )
+
+
+def resize_video_pixels(
+    pixels: torch.Tensor,
+    *,
+    width: int,
+    height: int,
+    crop: str = "center",
+) -> torch.Tensor:
+    if pixels.ndim != 4 or pixels.shape[-1] != 3:
+        raise ValueError(f"expected pixels [T,H,W,3], got {tuple(pixels.shape)}")
+    if crop != "center":
+        raise ValueError(f"unsupported crop mode: {crop}")
+    nchw = pixels.movedim(-1, 1)
+    resized = F.interpolate(nchw, size=(height, width), mode="bilinear", align_corners=False)
+    return resized.movedim(1, -1)
 
 
 def _latent_shape(latent_shape: Sequence[int]) -> LatentShape:
