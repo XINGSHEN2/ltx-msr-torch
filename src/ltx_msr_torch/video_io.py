@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tempfile
+import wave
 from pathlib import Path
 
 import torch
@@ -37,6 +39,47 @@ def decoded_video_to_frames(video: torch.Tensor) -> torch.Tensor:
 def frames_to_uint8_rgb(frames: torch.Tensor) -> torch.Tensor:
     frames = decoded_video_to_frames(frames)
     return (frames * 255.0).round().to(torch.uint8).contiguous()
+
+
+def decoded_audio_to_samples(audio: torch.Tensor) -> torch.Tensor:
+    """Normalize decoded audio tensors to [samples, channels] float32 in [-1,1]."""
+    if audio.ndim == 3:
+        if audio.shape[0] != 1:
+            raise ValueError(f"expected batch size 1 for decoded audio, got {audio.shape[0]}")
+        audio = audio[0]
+    if audio.ndim == 1:
+        audio = audio[:, None]
+    elif audio.ndim == 2:
+        if audio.shape[0] in (1, 2) and audio.shape[1] > audio.shape[0]:
+            audio = audio.movedim(0, 1)
+    else:
+        raise ValueError(f"expected decoded audio with 1, 2, or 3 dims, got {tuple(audio.shape)}")
+    audio = audio.detach().to(dtype=torch.float32, device="cpu")
+    return audio.clamp(-1.0, 1.0).contiguous()
+
+
+def audio_to_int16_pcm(audio: torch.Tensor) -> torch.Tensor:
+    samples = decoded_audio_to_samples(audio)
+    return (samples * 32767.0).round().to(torch.int16).contiguous()
+
+
+def write_audio_wav(
+    audio: torch.Tensor,
+    output: str | Path,
+    *,
+    sample_rate: int,
+) -> Path:
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+    pcm = audio_to_int16_pcm(audio)
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(output_path), "wb") as handle:
+        handle.setnchannels(int(pcm.shape[1]))
+        handle.setsampwidth(2)
+        handle.setframerate(int(sample_rate))
+        handle.writeframes(pcm.numpy().tobytes())
+    return output_path
 
 
 def write_video_mp4(
@@ -97,4 +140,55 @@ def write_video_mp4(
         )
     if frame_count <= 0 or not output_path.exists():
         raise RuntimeError(f"failed to write video output: {output_path}")
+    return output_path
+
+
+def write_av_mp4(
+    frames: torch.Tensor,
+    audio: torch.Tensor,
+    output: str | Path,
+    *,
+    fps: float,
+    sample_rate: int,
+    crf: int = 18,
+    preset: str = "medium",
+) -> Path:
+    """Write decoded video and audio tensors to a muxed mp4."""
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise RuntimeError("ffmpeg is required to mux mp4 output")
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="ltx_msr_mux_") as tmp:
+        tmp_path = Path(tmp)
+        video_path = write_video_mp4(
+            frames,
+            tmp_path / "video.mp4",
+            fps=fps,
+            crf=crf,
+            preset=preset,
+        )
+        audio_path = write_audio_wav(audio, tmp_path / "audio.wav", sample_rate=sample_rate)
+        command = [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(video_path),
+            "-i",
+            str(audio_path),
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(output_path),
+        ]
+        process = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if process.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg mux failed with code {process.returncode}: "
+            f"{process.stderr.decode('utf-8', errors='replace')}"
+        )
+    if not output_path.exists():
+        raise RuntimeError(f"failed to write muxed video output: {output_path}")
     return output_path

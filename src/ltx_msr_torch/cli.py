@@ -47,7 +47,7 @@ from .text_conditioning import (
 )
 from .text_projection import build_text_projection_from_checkpoint
 from .vae_sections import inspect_vae_section
-from .video_io import write_video_mp4
+from .video_io import write_av_mp4, write_video_mp4
 from .workflow_extract import extract_workflow_config
 from .workflow_config import default_workflow_config
 
@@ -884,11 +884,20 @@ def _smoke_ltxav_sampling(args: argparse.Namespace) -> int:
         print(f"ltxav_sampling_smoke_decoded_video_shape={tuple(output.decoded.video.shape)}")
         print(f"ltxav_sampling_smoke_decoded_video_finite={bool(torch.isfinite(output.decoded.video).all().item())}")
         if args.output_video:
-            output_path = write_video_mp4(
-                output.decoded.video,
-                args.output_video,
-                fps=float(default_workflow_config().latent.frame_rate),
-            )
+            if output.decoded.audio is not None and audio_vae is not None:
+                output_path = write_av_mp4(
+                    output.decoded.video,
+                    output.decoded.audio,
+                    args.output_video,
+                    fps=float(default_workflow_config().latent.frame_rate),
+                    sample_rate=int(getattr(audio_vae, "output_sample_rate", 48000)),
+                )
+            else:
+                output_path = write_video_mp4(
+                    output.decoded.video,
+                    args.output_video,
+                    fps=float(default_workflow_config().latent.frame_rate),
+                )
             print(f"ltxav_sampling_smoke_output_video={output_path}")
         if output.decoded.audio is not None:
             print(f"ltxav_sampling_smoke_decoded_audio_shape={tuple(output.decoded.audio.shape)}")

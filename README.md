@@ -28,9 +28,10 @@ API-prompt comparison, but the main reconstruction code runs locally in torch.
   LoRA application, LTXAV input/output projection, timestep/rope preparation,
   tuple Euler sampling, and VAE video/audio decode.
 - Implemented: IC-LoRA video guide planning, real VideoVAE guide encode,
-  keyframe/guide attention metadata injection, and decoded mp4 smoke output.
+  keyframe/guide attention metadata injection, and decoded mp4 smoke output
+  with AAC audio muxing.
 - Remaining: full-size end-to-end generation still needs practical GPU runtime
-  validation and audio muxing into the written mp4.
+  validation.
 
 The intended path is:
 
@@ -160,7 +161,8 @@ normalized attention guidance formula and workflow patch target planning.
 Euler sampler utilities are available from `ltx_msr_torch.sampler`; model
 forward integration is intentionally separate from the deterministic step math.
 
-Run a minimal real-weight torch sampling smoke and write the decoded video:
+Run a minimal real-weight torch sampling smoke and write the decoded video with
+audio:
 
 ```bash
 PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
@@ -174,8 +176,8 @@ PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
 ```
 
 This smoke intentionally uses one transformer layer and a 1x1 latent grid so it
-verifies wiring, LoRA application, decode, and mp4 output without attempting the
-full 22B workflow resolution.
+verifies wiring, LoRA application, video/audio decode, AAC muxing, and mp4
+output without attempting the full 22B workflow resolution.
 
 ## Parity Notes
 
