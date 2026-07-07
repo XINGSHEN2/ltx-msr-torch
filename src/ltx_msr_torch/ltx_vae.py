@@ -20,6 +20,12 @@ class LTXVAELoadReport:
     missing: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class LTXAVDecoders:
+    video_vae: torch.nn.Module
+    audio_vae: torch.nn.Module
+
+
 def _enable_comfy_lightricks_imports() -> None:
     root = str(COMFYUI_ROOT)
     if root not in sys.path:
@@ -132,6 +138,20 @@ def load_ltx_audio_vae_weights(
 ) -> torch.nn.modules.module._IncompatibleKeys:
     state_dict = load_ltx_audio_vae_state_dict(checkpoint_path, device=device)
     return model.load_state_dict(state_dict, strict=strict)
+
+
+def load_ltxav_decoders_from_checkpoint(
+    checkpoint_path: str | Path,
+    *,
+    dtype: torch.dtype | None = None,
+    device: torch.device | str | None = "cpu",
+    strict: bool = True,
+) -> LTXAVDecoders:
+    video_vae = build_ltx_video_vae_from_checkpoint(checkpoint_path, dtype=dtype, device=device)
+    audio_vae = build_ltx_audio_vae_from_checkpoint(checkpoint_path, dtype=dtype, device=device)
+    load_ltx_video_vae_weights(video_vae, checkpoint_path, strict=strict, device=device or "cpu")
+    load_ltx_audio_vae_weights(audio_vae, checkpoint_path, strict=strict, device=device or "cpu")
+    return LTXAVDecoders(video_vae=video_vae, audio_vae=audio_vae)
 
 
 @torch.no_grad()
