@@ -74,6 +74,12 @@ def sample_ltxav_workflow_latents(
     transformer_options: dict[str, object] | None = None,
     self_attention_mask: torch.Tensor | None = None,
     ref_audio_seq_len: int = 0,
+    keyframe_idxs: torch.Tensor | None = None,
+    grid_mask: torch.Tensor | None = None,
+    orig_patchified_shape: tuple[int, ...] | list[int] | None = None,
+    output_orig_shape: tuple[int, ...] | list[int] | None = None,
+    denoise_mask: torch.Tensor | None = None,
+    guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     return sample_ltxav_euler(
         model=model,
@@ -86,6 +92,12 @@ def sample_ltxav_workflow_latents(
         transformer_options=transformer_options,
         self_attention_mask=self_attention_mask,
         ref_audio_seq_len=ref_audio_seq_len,
+        keyframe_idxs=keyframe_idxs,
+        grid_mask=grid_mask,
+        orig_patchified_shape=orig_patchified_shape,
+        output_orig_shape=output_orig_shape,
+        denoise_mask=denoise_mask,
+        guide_attention_entries=guide_attention_entries,
     )
 
 
@@ -104,6 +116,12 @@ def run_ltxav_sample_decode(
     transformer_options: dict[str, object] | None = None,
     self_attention_mask: torch.Tensor | None = None,
     ref_audio_seq_len: int = 0,
+    keyframe_idxs: torch.Tensor | None = None,
+    grid_mask: torch.Tensor | None = None,
+    orig_patchified_shape: tuple[int, ...] | list[int] | None = None,
+    output_orig_shape: tuple[int, ...] | list[int] | None = None,
+    denoise_mask: torch.Tensor | None = None,
+    guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
 ) -> LTXAVWorkflowSampleOutput:
     sampled_video, sampled_audio = sample_ltxav_workflow_latents(
         model=model,
@@ -116,6 +134,12 @@ def run_ltxav_sample_decode(
         transformer_options=transformer_options,
         self_attention_mask=self_attention_mask,
         ref_audio_seq_len=ref_audio_seq_len,
+        keyframe_idxs=keyframe_idxs,
+        grid_mask=grid_mask,
+        orig_patchified_shape=orig_patchified_shape,
+        output_orig_shape=output_orig_shape,
+        denoise_mask=denoise_mask,
+        guide_attention_entries=guide_attention_entries,
     )
     decoded = None
     if video_vae is not None:

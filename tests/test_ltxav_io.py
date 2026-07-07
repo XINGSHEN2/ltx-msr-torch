@@ -44,6 +44,37 @@ def test_ltxav_input_projection_forward_shapes():
     assert output.audio_latent_coords.shape == (1, 1, 5, 2)
 
 
+def test_ltxav_input_projection_filters_keyframe_tokens_with_denoise_mask():
+    module = LTXAVInputProjection(
+        video_in_channels=2,
+        video_hidden_dim=4,
+        audio_in_channels=6,
+        audio_hidden_dim=3,
+        dtype=torch.float32,
+    )
+    video = torch.randn(1, 2, 2, 1, 2)
+    audio = torch.randn(1, 2, 1, 3)
+    keyframe_idxs = torch.full((1, 3, 2, 2), 99.0)
+    denoise_mask = torch.tensor([[[[[1.0]], [[-1.0]]]]])
+
+    output = module(
+        video,
+        audio,
+        keyframe_idxs=keyframe_idxs,
+        denoise_mask=denoise_mask,
+        guide_attention_entries=[{"pre_filter_count": 2, "latent_shape": [1, 1, 2], "strength": 1.0}],
+    )
+
+    assert output.orig_patchified_shape == (1, 4, 2)
+    assert torch.equal(output.grid_mask, torch.tensor([True, True, False, False]))
+    assert output.video_patches.shape == (1, 2, 2)
+    assert output.video_tokens.shape == (1, 2, 4)
+    assert output.num_guide_tokens == 0
+    assert output.resolved_guide_entries == (
+        {"pre_filter_count": 2, "latent_shape": [1, 1, 2], "strength": 1.0, "surviving_count": 0},
+    )
+
+
 def test_ltxav_output_projection_forward_shapes():
     module = LTXAVOutputProjection(
         video_hidden_dim=4,

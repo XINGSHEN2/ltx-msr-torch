@@ -18,6 +18,8 @@ class LTXAVPreparedBlockInputs:
     audio_pe: tuple[torch.Tensor, torch.Tensor, bool]
     video_cross_pe: tuple[torch.Tensor, torch.Tensor, bool]
     audio_cross_pe: tuple[torch.Tensor, torch.Tensor, bool]
+    grid_mask: torch.Tensor | None = None
+    orig_patchified_shape: tuple[int, ...] | None = None
 
 
 def prepare_attention_mask(attention_mask: torch.Tensor | None, x_dtype: torch.dtype) -> torch.Tensor | None:
@@ -124,8 +126,17 @@ def prepare_ltxav_block_inputs(
     audio_cross_dim: int = 2048,
     video_heads: int = 32,
     audio_heads: int = 32,
+    keyframe_idxs: torch.Tensor | None = None,
+    denoise_mask: torch.Tensor | None = None,
+    guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
 ) -> LTXAVPreparedBlockInputs:
-    projected = input_projection(video_latents, audio_latents)
+    projected = input_projection(
+        video_latents,
+        audio_latents,
+        keyframe_idxs=keyframe_idxs,
+        denoise_mask=denoise_mask,
+        guide_attention_entries=guide_attention_entries,
+    )
     video_context, audio_context = split_ltxav_context(context, video_dim=video_dim, audio_dim=audio_dim)
     prepared_mask = prepare_attention_mask(attention_mask, projected.video_tokens.dtype)
     video_pe, audio_pe, video_cross_pe, audio_cross_pe = prepare_ltxav_positional_embeddings(
@@ -147,4 +158,6 @@ def prepare_ltxav_block_inputs(
         audio_pe=audio_pe,
         video_cross_pe=video_cross_pe,
         audio_cross_pe=audio_cross_pe,
+        grid_mask=projected.grid_mask,
+        orig_patchified_shape=projected.orig_patchified_shape,
     )

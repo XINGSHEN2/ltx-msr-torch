@@ -202,6 +202,12 @@ class LTXAVModel(torch.nn.Module):
         self_attention_mask: torch.Tensor | None = None,
         ref_audio_seq_len: int = 0,
         target_audio_seq_len: int | None = None,
+        keyframe_idxs: torch.Tensor | None = None,
+        grid_mask: torch.Tensor | None = None,
+        orig_patchified_shape: tuple[int, ...] | list[int] | None = None,
+        output_orig_shape: tuple[int, ...] | list[int] | None = None,
+        denoise_mask: torch.Tensor | None = None,
+        guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
     ) -> torch.Tensor | list[torch.Tensor]:
         config = self.config
         prepared = prepare_ltxav_block_inputs(
@@ -216,7 +222,12 @@ class LTXAVModel(torch.nn.Module):
             audio_cross_dim=config.audio_heads * config.audio_dim_head,
             video_heads=config.video_heads,
             audio_heads=config.audio_heads,
+            keyframe_idxs=keyframe_idxs,
+            denoise_mask=denoise_mask,
+            guide_attention_entries=guide_attention_entries,
         )
+        grid_mask = grid_mask if grid_mask is not None else prepared.grid_mask
+        orig_patchified_shape = orig_patchified_shape if orig_patchified_shape is not None else prepared.orig_patchified_shape
         timesteps = prepare_ltxav_timesteps(
             timestep=timestep,
             batch_size=video_latents.shape[0],
@@ -265,7 +276,10 @@ class LTXAVModel(torch.nn.Module):
             audio_tokens,
             video_embedded_timestep=timesteps.video_embedded_timestep,
             audio_embedded_timestep=timesteps.audio_embedded_timestep,
-            orig_shape=tuple(video_latents.shape),
+            orig_shape=tuple(output_orig_shape or video_latents.shape),
+            keyframe_idxs=keyframe_idxs,
+            grid_mask=grid_mask,
+            orig_patchified_shape=orig_patchified_shape,
             ref_audio_seq_len=ref_audio_seq_len,
             audio_channels=config.audio_channels,
             audio_frequency=config.audio_frequency,

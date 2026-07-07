@@ -24,6 +24,10 @@ class LTXAVProjectedInputs:
     audio_latent_coords: torch.Tensor
     video_patches: torch.Tensor
     audio_patches: torch.Tensor
+    grid_mask: torch.Tensor | None = None
+    orig_patchified_shape: tuple[int, ...] | None = None
+    num_guide_tokens: int = 0
+    resolved_guide_entries: tuple[dict[str, object], ...] = ()
 
 
 class LTXAVInputProjection(torch.nn.Module):
@@ -46,6 +50,9 @@ class LTXAVInputProjection(torch.nn.Module):
         video_latents: torch.Tensor,
         audio_latents: torch.Tensor,
         *,
+        keyframe_idxs: torch.Tensor | None = None,
+        denoise_mask: torch.Tensor | None = None,
+        guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
         vae_scale_factors: tuple[int, int, int] = (8, 32, 32),
         causal_temporal_positioning: bool = True,
     ) -> LTXAVProjectedInputs:
@@ -56,15 +63,65 @@ class LTXAVInputProjection(torch.nn.Module):
             vae_scale_factors,
             causal_fix=causal_temporal_positioning,
         )
+        video_patches = video.patches
+        video_latent_coords = video.latent_coords
+        orig_patchified_shape = None
+        grid_mask = None
+        resolved_entries: tuple[dict[str, object], ...] = ()
+        num_guide_tokens = 0
+        if keyframe_idxs is not None and keyframe_idxs.shape[2] > 0:
+            if denoise_mask is None:
+                raise ValueError("denoise_mask is required when keyframe indices are provided")
+            orig_patchified_shape = tuple(video_patches.shape)
+            expanded_mask = _expand_denoise_mask(denoise_mask, video_latents)
+            denoise_patches = symmetric_patchify_video(expanded_mask, patch_size=1, start_end=True).patches
+            grid_mask = ~torch.any(denoise_patches < 0, dim=-1)[0]
+            video_patches = video_patches[:, grid_mask, :]
+            video_latent_coords = video_latent_coords[:, :, grid_mask, :]
+            video_pixel_coords = video_pixel_coords[:, :, grid_mask, :]
+            kf_grid_mask = grid_mask[-keyframe_idxs.shape[2] :]
+            if guide_attention_entries:
+                resolved_entries = _resolve_guide_attention_entries(guide_attention_entries, kf_grid_mask)
+            keyframe_idxs = keyframe_idxs[..., kf_grid_mask, :]
+            if keyframe_idxs.shape[2] > 0:
+                video_pixel_coords[:, :, -keyframe_idxs.shape[2] :, :] = keyframe_idxs
+            num_guide_tokens = int(keyframe_idxs.shape[2])
         return LTXAVProjectedInputs(
-            video_tokens=self.patchify_proj(video.patches),
+            video_tokens=self.patchify_proj(video_patches),
             audio_tokens=self.audio_patchify_proj(audio.patches),
-            video_latent_coords=video.latent_coords,
+            video_latent_coords=video_latent_coords,
             video_pixel_coords=video_pixel_coords,
             audio_latent_coords=audio.timings,
-            video_patches=video.patches,
+            video_patches=video_patches,
             audio_patches=audio.patches,
+            grid_mask=grid_mask,
+            orig_patchified_shape=orig_patchified_shape,
+            num_guide_tokens=num_guide_tokens,
+            resolved_guide_entries=resolved_entries,
         )
+
+
+def _expand_denoise_mask(denoise_mask: torch.Tensor, video_latents: torch.Tensor) -> torch.Tensor:
+    if denoise_mask.shape[3] == video_latents.shape[3] and denoise_mask.shape[4] == video_latents.shape[4]:
+        return denoise_mask
+    return denoise_mask.expand(-1, -1, -1, video_latents.shape[3], video_latents.shape[4])
+
+
+def _resolve_guide_attention_entries(
+    entries: tuple[dict[str, object], ...] | list[dict[str, object]],
+    kf_grid_mask: torch.Tensor,
+) -> tuple[dict[str, object], ...]:
+    total = sum(int(entry["pre_filter_count"]) for entry in entries)
+    if total != len(kf_grid_mask):
+        raise ValueError(f"guide pre_filter_counts ({total}) != keyframe grid mask length ({len(kf_grid_mask)})")
+    resolved: list[dict[str, object]] = []
+    offset = 0
+    for entry in entries:
+        count = int(entry["pre_filter_count"])
+        entry_mask = kf_grid_mask[offset : offset + count]
+        resolved.append({**entry, "surviving_count": int(entry_mask.sum().item())})
+        offset += count
+    return tuple(resolved)
 
 
 class LTXAVOutputProjection(torch.nn.Module):

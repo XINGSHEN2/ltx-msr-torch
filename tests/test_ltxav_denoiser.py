@@ -48,6 +48,34 @@ def test_ltxav_denoiser_supports_scalar_sigma():
     assert torch.equal(call["timestep"], torch.full((2, 1), 0.4))
 
 
+def test_ltxav_denoiser_passes_keyframe_output_metadata():
+    model = _FakeLTXAVModel()
+    keyframe_idxs = torch.zeros(1, 3, 1, 2)
+    grid_mask = torch.tensor([True, False])
+    denoiser = LTXAVDenoiser(
+        model=model,
+        context=torch.randn(1, 5, 16),
+        attention_mask=None,
+        frame_rate=24.0,
+        keyframe_idxs=keyframe_idxs,
+        grid_mask=grid_mask,
+        orig_patchified_shape=(1, 2, 2),
+        output_orig_shape=(1, 2, 1, 1, 1),
+        denoise_mask=torch.ones(1, 1, 2, 1, 1),
+        guide_attention_entries=({"pre_filter_count": 1},),
+    )
+
+    denoiser((torch.ones(1, 2, 1, 1, 2), torch.ones(1, 2, 1, 1)), torch.tensor(0.4))
+
+    call = model.calls[0]
+    assert call["keyframe_idxs"] is keyframe_idxs
+    assert call["grid_mask"] is grid_mask
+    assert call["orig_patchified_shape"] == (1, 2, 2)
+    assert call["output_orig_shape"] == (1, 2, 1, 1, 1)
+    assert call["denoise_mask"].shape == (1, 1, 2, 1, 1)
+    assert call["guide_attention_entries"] == ({"pre_filter_count": 1},)
+
+
 def test_sample_ltxav_euler_runs_adapter_and_tuple_sampler():
     model = _FakeLTXAVModel()
     video = torch.ones(1, 2, 1, 1, 1) * 4

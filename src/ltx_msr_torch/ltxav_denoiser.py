@@ -23,6 +23,12 @@ class LTXAVModelProtocol(Protocol):
         self_attention_mask: torch.Tensor | None = None,
         ref_audio_seq_len: int = 0,
         target_audio_seq_len: int | None = None,
+        keyframe_idxs: torch.Tensor | None = None,
+        grid_mask: torch.Tensor | None = None,
+        orig_patchified_shape: tuple[int, ...] | list[int] | None = None,
+        output_orig_shape: tuple[int, ...] | list[int] | None = None,
+        denoise_mask: torch.Tensor | None = None,
+        guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
     ) -> torch.Tensor | list[torch.Tensor]:
         ...
 
@@ -36,6 +42,12 @@ class LTXAVDenoiser:
     transformer_options: dict[str, object] | None = None
     self_attention_mask: torch.Tensor | None = None
     ref_audio_seq_len: int = 0
+    keyframe_idxs: torch.Tensor | None = None
+    grid_mask: torch.Tensor | None = None
+    orig_patchified_shape: tuple[int, ...] | list[int] | None = None
+    output_orig_shape: tuple[int, ...] | list[int] | None = None
+    denoise_mask: torch.Tensor | None = None
+    guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None
 
     def __call__(
         self,
@@ -60,6 +72,12 @@ class LTXAVDenoiser:
             self_attention_mask=self.self_attention_mask,
             ref_audio_seq_len=self.ref_audio_seq_len,
             target_audio_seq_len=audio_timestep.shape[1],
+            keyframe_idxs=self.keyframe_idxs,
+            grid_mask=self.grid_mask,
+            orig_patchified_shape=self.orig_patchified_shape,
+            output_orig_shape=self.output_orig_shape,
+            denoise_mask=self.denoise_mask,
+            guide_attention_entries=self.guide_attention_entries,
         )
         if not isinstance(output, list) or len(output) != 2:
             raise TypeError("LTXAV denoiser expects model output [video, audio]")
@@ -91,6 +109,12 @@ def sample_ltxav_euler(
     transformer_options: dict[str, object] | None = None,
     self_attention_mask: torch.Tensor | None = None,
     ref_audio_seq_len: int = 0,
+    keyframe_idxs: torch.Tensor | None = None,
+    grid_mask: torch.Tensor | None = None,
+    orig_patchified_shape: tuple[int, ...] | list[int] | None = None,
+    output_orig_shape: tuple[int, ...] | list[int] | None = None,
+    denoise_mask: torch.Tensor | None = None,
+    guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     denoiser = LTXAVDenoiser(
         model=model,
@@ -100,6 +124,12 @@ def sample_ltxav_euler(
         transformer_options=transformer_options,
         self_attention_mask=self_attention_mask,
         ref_audio_seq_len=ref_audio_seq_len,
+        keyframe_idxs=keyframe_idxs,
+        grid_mask=grid_mask,
+        orig_patchified_shape=orig_patchified_shape,
+        output_orig_shape=output_orig_shape,
+        denoise_mask=denoise_mask,
+        guide_attention_entries=guide_attention_entries,
     )
     sampled = sample_euler_latents(denoiser, (video_latents, audio_latents), sigmas)
     if not isinstance(sampled, tuple):

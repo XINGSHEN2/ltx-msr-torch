@@ -1,4 +1,6 @@
-from ltx_msr_torch.iclora_guide import plan_iclora_video_guide
+import torch
+
+from ltx_msr_torch.iclora_guide import append_iclora_keyframe, plan_iclora_video_guide
 
 
 def test_plan_iclora_video_guide_matches_project_sample_shape():
@@ -50,3 +52,77 @@ def test_plan_iclora_video_guide_rejects_overflow():
         assert "Conditioning frames exceed" in str(error)
     else:
         raise AssertionError("expected guide overflow to raise")
+
+
+def test_append_iclora_keyframe_appends_latent_and_conditioning_metadata():
+    positive = [[torch.zeros(1, 2, 4), {}]]
+    negative = [[torch.zeros(1, 2, 4), {}]]
+    latent = {"samples": torch.zeros(1, 128, 3, 2, 2)}
+    guide = torch.ones(1, 128, 1, 2, 2)
+
+    result = append_iclora_keyframe(
+        positive=positive,
+        negative=negative,
+        latent=latent,
+        guiding_latent=guide,
+        frame_idx=0,
+        strength=0.75,
+        scale_factors=(8, 32, 32),
+    )
+
+    assert result.latent["samples"].shape == (1, 128, 4, 2, 2)
+    assert torch.equal(result.latent["samples"][:, :, 3:], guide)
+    assert result.latent["noise_mask"].shape == (1, 1, 4, 1, 1)
+    assert torch.allclose(result.latent["noise_mask"][:, :, :3], torch.ones(1, 1, 3, 1, 1))
+    assert torch.allclose(result.latent["noise_mask"][:, :, 3:], torch.full((1, 1, 1, 1, 1), 0.25))
+    positive_meta = result.positive[0][1]
+    negative_meta = result.negative[0][1]
+    assert positive_meta["keyframe_idxs"].shape == (1, 3, 4, 2)
+    assert negative_meta["keyframe_idxs"].shape == (1, 3, 4, 2)
+    assert positive_meta["guide_attention_entries"] == [
+        {"pre_filter_count": 4, "strength": 1.0, "pixel_mask": None, "latent_shape": [1, 2, 2]}
+    ]
+    assert result.tokens_added == 4
+    assert result.guide_orig_shape == (1, 2, 2)
+
+
+def test_append_iclora_keyframe_extends_existing_keyframe_metadata():
+    positive = [[torch.zeros(1, 2, 4), {}]]
+    negative = [[torch.zeros(1, 2, 4), {}]]
+    latent = {"samples": torch.zeros(1, 128, 4, 2, 2)}
+    first = append_iclora_keyframe(
+        positive=positive,
+        negative=negative,
+        latent=latent,
+        guiding_latent=torch.ones(1, 128, 1, 2, 2),
+        frame_idx=0,
+        strength=1.0,
+    )
+
+    second = append_iclora_keyframe(
+        positive=first.positive,
+        negative=first.negative,
+        latent=first.latent,
+        guiding_latent=torch.ones(1, 128, 1, 2, 2) * 2,
+        frame_idx=8,
+        strength=1.0,
+    )
+
+    assert second.positive[0][1]["keyframe_idxs"].shape == (1, 3, 8, 2)
+    assert len(second.positive[0][1]["guide_attention_entries"]) == 2
+    assert second.latent["samples"].shape == (1, 128, 6, 2, 2)
+
+
+def test_append_iclora_keyframe_aligns_nonzero_frame_index():
+    result = append_iclora_keyframe(
+        positive=[[torch.zeros(1, 2, 4), {}]],
+        negative=[[torch.zeros(1, 2, 4), {}]],
+        latent={"samples": torch.zeros(1, 128, 8, 1, 1)},
+        guiding_latent=torch.ones(1, 128, 2, 1, 1),
+        frame_idx=10,
+        strength=1.0,
+    )
+
+    assert result.frame_idx == 9
+    assert result.latent_idx == 2
+    assert result.positive[0][1]["keyframe_idxs"][0, 0, 0, 0].item() == 9

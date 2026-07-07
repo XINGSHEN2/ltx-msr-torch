@@ -3,9 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
+import torch
+
+from .ltx_patchify import latent_to_pixel_coords, symmetric_patchify_video
+from .torch_nodes import conditioning_set_values
+
 
 ScaleFactors = tuple[int, int, int]
 LatentShape = tuple[int, int, int, int, int]
+Conditioning = list[list[object]]
 
 
 @dataclass(frozen=True)
@@ -28,6 +34,17 @@ class ICLoRAVideoGuidePlan:
     use_tiled_encode: bool
     tile_size: int
     tile_overlap: int
+
+
+@dataclass(frozen=True)
+class ICLoRAGuideAppendResult:
+    positive: Conditioning
+    negative: Conditioning
+    latent: dict[str, torch.Tensor]
+    tokens_added: int
+    guide_orig_shape: tuple[int, int, int]
+    frame_idx: int
+    latent_idx: int
 
 
 def plan_iclora_video_guide(
@@ -117,6 +134,162 @@ def plan_iclora_video_guide(
     )
 
 
+def get_conditioning_value(conditioning: Conditioning, key: str, default: object = None) -> object:
+    for item in conditioning:
+        metadata = item[1]
+        if isinstance(metadata, dict) and key in metadata:
+            return metadata[key]
+    return default
+
+
+def get_noise_mask(latent: dict[str, torch.Tensor]) -> torch.Tensor:
+    latent_image = latent["samples"]
+    noise_mask = latent.get("noise_mask")
+    if noise_mask is not None:
+        return noise_mask.clone()
+    return torch.ones(
+        (latent_image.shape[0], 1, latent_image.shape[2], 1, 1),
+        dtype=torch.float32,
+        device=latent_image.device,
+    )
+
+
+def get_keyframe_idxs(conditioning: Conditioning, latent_shape: Sequence[int] | None = None) -> tuple[torch.Tensor | None, int]:
+    keyframe_idxs = get_conditioning_value(conditioning, "keyframe_idxs")
+    if keyframe_idxs is None:
+        return None, 0
+    if not isinstance(keyframe_idxs, torch.Tensor):
+        raise TypeError("keyframe_idxs must be a tensor")
+    if latent_shape is not None and len(latent_shape) == 5:
+        tokens_per_frame = int(latent_shape[-2]) * int(latent_shape[-1])
+        return keyframe_idxs, int(keyframe_idxs.shape[2] // tokens_per_frame)
+    entries = get_conditioning_value(conditioning, "guide_attention_entries", [])
+    if entries:
+        return keyframe_idxs, int(sum(entry["latent_shape"][0] for entry in entries))  # type: ignore[index]
+    return keyframe_idxs, 0
+
+
+def add_guide_attention_entry(
+    conditioning: Conditioning,
+    *,
+    pre_filter_count: int,
+    latent_shape: Sequence[int],
+    attention_strength: float = 1.0,
+    attention_mask: torch.Tensor | None = None,
+) -> Conditioning:
+    existing = get_conditioning_value(conditioning, "guide_attention_entries", [])
+    entries = [*(existing if isinstance(existing, list) else [])]
+    entries.append(
+        {
+            "pre_filter_count": int(pre_filter_count),
+            "strength": float(attention_strength),
+            "pixel_mask": attention_mask,
+            "latent_shape": [int(value) for value in latent_shape],
+        }
+    )
+    return conditioning_set_values(conditioning, {"guide_attention_entries": entries})
+
+
+def add_keyframe_index(
+    conditioning: Conditioning,
+    *,
+    frame_idx: int,
+    guiding_latent: torch.Tensor,
+    scale_factors: ScaleFactors = (8, 32, 32),
+    latent_downscale_factor: float = 1.0,
+    causal_fix: bool | None = None,
+) -> Conditioning:
+    keyframe_idxs, _ = get_keyframe_idxs(conditioning)
+    patchified = symmetric_patchify_video(guiding_latent, patch_size=1, start_end=True)
+    if causal_fix is None:
+        causal_fix = frame_idx == 0 or guiding_latent.shape[2] == 1
+    pixel_coords = latent_to_pixel_coords(patchified.latent_coords, scale_factors, causal_fix=causal_fix)
+    pixel_coords[:, 0] += frame_idx
+    spatial_end_offset = (latent_downscale_factor - 1) * torch.tensor(
+        scale_factors[1:],
+        device=pixel_coords.device,
+    ).view(1, -1, 1, 1)
+    pixel_coords[:, 1:, :, 1:] += spatial_end_offset.to(pixel_coords.dtype)
+    if keyframe_idxs is not None:
+        pixel_coords = torch.cat([keyframe_idxs, pixel_coords], dim=2)
+    return conditioning_set_values(conditioning, {"keyframe_idxs": pixel_coords})
+
+
+def append_iclora_keyframe(
+    *,
+    positive: Conditioning,
+    negative: Conditioning,
+    latent: dict[str, torch.Tensor],
+    guiding_latent: torch.Tensor,
+    frame_idx: int,
+    strength: float,
+    scale_factors: ScaleFactors = (8, 32, 32),
+    guide_mask: torch.Tensor | None = None,
+    latent_downscale_factor: float = 1.0,
+    causal_fix: bool | None = None,
+) -> ICLoRAGuideAppendResult:
+    latent_image = latent["samples"]
+    if latent_image.shape[1] != guiding_latent.shape[1]:
+        raise ValueError("Adding guide to a combined AV latent is not supported.")
+    resolved_frame_idx, latent_idx = _get_latent_index(
+        positive,
+        latent_length=latent_image.shape[2],
+        guide_length=guiding_latent.shape[2],
+        frame_idx=frame_idx,
+        scale_factors=scale_factors,
+        latent_shape=latent_image.shape,
+    )
+    if latent_idx + guiding_latent.shape[2] > latent_image.shape[2]:
+        raise AssertionError("Conditioning frames exceed the length of the latent sequence.")
+    noise_mask = get_noise_mask(latent)
+    positive = add_keyframe_index(
+        positive,
+        frame_idx=resolved_frame_idx,
+        guiding_latent=guiding_latent,
+        scale_factors=scale_factors,
+        latent_downscale_factor=latent_downscale_factor,
+        causal_fix=causal_fix,
+    )
+    negative = add_keyframe_index(
+        negative,
+        frame_idx=resolved_frame_idx,
+        guiding_latent=guiding_latent,
+        scale_factors=scale_factors,
+        latent_downscale_factor=latent_downscale_factor,
+        causal_fix=causal_fix,
+    )
+    if guide_mask is not None:
+        target_h = max(noise_mask.shape[3], guide_mask.shape[3])
+        target_w = max(noise_mask.shape[4], guide_mask.shape[4])
+        if noise_mask.shape[3] == 1 or noise_mask.shape[4] == 1:
+            noise_mask = noise_mask.expand(-1, -1, -1, target_h, target_w)
+        if guide_mask.shape[3] == 1 or guide_mask.shape[4] == 1:
+            guide_mask = guide_mask.expand(-1, -1, -1, target_h, target_w)
+        mask = guide_mask - strength
+    else:
+        mask = torch.full(
+            (noise_mask.shape[0], 1, guiding_latent.shape[2], noise_mask.shape[3], noise_mask.shape[4]),
+            max(0.0, 1.0 - strength),
+            dtype=noise_mask.dtype,
+            device=noise_mask.device,
+        )
+    latent_image = torch.cat([latent_image, guiding_latent], dim=2)
+    noise_mask = torch.cat([noise_mask, mask], dim=2)
+    guide_orig_shape = tuple(int(value) for value in guiding_latent.shape[2:])
+    tokens_added = int(guiding_latent.shape[2] * guiding_latent.shape[3] * guiding_latent.shape[4])
+    positive = add_guide_attention_entry(positive, pre_filter_count=tokens_added, latent_shape=guide_orig_shape)
+    negative = add_guide_attention_entry(negative, pre_filter_count=tokens_added, latent_shape=guide_orig_shape)
+    return ICLoRAGuideAppendResult(
+        positive=positive,
+        negative=negative,
+        latent={"samples": latent_image, "noise_mask": noise_mask},
+        tokens_added=tokens_added,
+        guide_orig_shape=guide_orig_shape,
+        frame_idx=resolved_frame_idx,
+        latent_idx=latent_idx,
+    )
+
+
 def _latent_shape(latent_shape: Sequence[int]) -> LatentShape:
     if len(latent_shape) != 5:
         raise ValueError("latent_shape must be [batch, channels, frames, height, width]")
@@ -136,3 +309,22 @@ def _resolve_frame_idx(
     if guide_length > 1 and resolved != 0:
         resolved = (resolved - 1) // time_scale_factor * time_scale_factor + 1
     return resolved
+
+
+def _get_latent_index(
+    conditioning: Conditioning,
+    *,
+    latent_length: int,
+    guide_length: int,
+    frame_idx: int,
+    scale_factors: ScaleFactors,
+    latent_shape: Sequence[int] | None = None,
+) -> tuple[int, int]:
+    time_scale_factor = scale_factors[0]
+    _, num_keyframes = get_keyframe_idxs(conditioning, latent_shape)
+    latent_count = latent_length - num_keyframes
+    resolved = frame_idx if frame_idx >= 0 else max((latent_count - 1) * time_scale_factor + 1 + frame_idx, 0)
+    if guide_length > 1 and resolved != 0:
+        resolved = (resolved - 1) // time_scale_factor * time_scale_factor + 1
+    latent_idx = (resolved + time_scale_factor - 1) // time_scale_factor
+    return resolved, latent_idx
