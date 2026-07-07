@@ -17,6 +17,7 @@ from .local_state import build_low_level_state
 from .lora_apply import target_key_candidates
 from .ltx_embeddings_connector import build_embeddings_connector_from_checkpoint
 from .ltxav_model import (
+    apply_lora_to_ltxav_model,
     create_ltxav_model_from_checkpoint,
     load_ltxav_model_weights_streaming,
     ltxav_model_local_key,
@@ -205,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     smoke_ltxav_sampling.add_argument("--device", default="cpu")
     smoke_ltxav_sampling.add_argument("--dtype", choices=("bf16", "fp16", "fp32"), default="bf16")
     smoke_ltxav_sampling.add_argument("--decode", action="store_true")
+    smoke_ltxav_sampling.add_argument("--apply-lora", action="store_true")
     smoke_ltxav_sampling.add_argument("--enable-av-cross", action="store_true")
 
     args = parser.parse_args(argv)
@@ -825,6 +827,16 @@ def _smoke_ltxav_sampling(args: argparse.Namespace) -> int:
         device=device,
         assign=True,
     )
+    lora_report = None
+    if args.apply_lora:
+        lora_path = resolve_lora_path(default_workflow_config().model.lora)
+        lora_manifest = inspect_lora_manifest(lora_path)
+        lora_report = apply_lora_to_ltxav_model(
+            model,
+            lora_path=lora_path,
+            manifest=lora_manifest,
+            strength=default_workflow_config().model.lora_strength,
+        )
     model.eval()
     video_latents = torch.zeros((1, model.config.video_in_channels, 1, 1, 1), device=device, dtype=dtype)
     audio_latents = torch.zeros((1, model.config.audio_channels, 1, model.config.audio_frequency), device=device, dtype=dtype)
@@ -858,6 +870,10 @@ def _smoke_ltxav_sampling(args: argparse.Namespace) -> int:
     print(f"ltxav_sampling_smoke_device={device}")
     print(f"ltxav_sampling_smoke_dtype={dtype}")
     print(f"ltxav_sampling_smoke_decode={bool(args.decode)}")
+    print(f"ltxav_sampling_smoke_lora_applied={bool(args.apply_lora)}")
+    if lora_report is not None:
+        print(f"ltxav_sampling_smoke_lora_matched={lora_report.matched}")
+        print(f"ltxav_sampling_smoke_lora_skipped={lora_report.skipped}")
     print(f"ltxav_sampling_smoke_video_latent_shape={tuple(output.video_latents.shape)}")
     print(f"ltxav_sampling_smoke_audio_latent_shape={tuple(output.audio_latents.shape)}")
     print(f"ltxav_sampling_smoke_video_finite={bool(torch.isfinite(output.video_latents).all().item())}")
