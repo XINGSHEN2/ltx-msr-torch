@@ -29,6 +29,7 @@ from .ltx_vae import (
     build_ltx_video_vae_from_checkpoint,
     load_ltxav_decoders_from_checkpoint,
     load_ltx_audio_vae_state_dict,
+    load_ltx_video_vae_weights,
     load_ltx_video_vae_state_dict,
     missing_ltx_vae_keys,
 )
@@ -38,6 +39,7 @@ from .lora_apply import match_lora_targets
 from .lora_loader import inspect_lora_manifest, resolve_lora_path
 from .model_inspect import inspect_workflow_model_headers
 from .msr_reference import create_msr_reference_video_from_paths
+from .iclora_guide import prepare_and_append_iclora_video_guide
 from .prompt_utils import parse_reference_prompt_file
 from .text_encoder_sections import inspect_text_encoder_section
 from .text_conditioning import (
@@ -174,6 +176,16 @@ def main(argv: list[str] | None = None) -> int:
     smoke_text_conditioning.add_argument("--device", default="cpu")
     smoke_text_conditioning.add_argument("--dtype", choices=("bf16", "fp32"), default="bf16")
     smoke_text_conditioning.add_argument("--case-dir", default="sample_cases/validition_v1_01")
+    smoke_case_inputs = subparsers.add_parser(
+        "smoke-case-inputs",
+        help="Build sample-case prompt/reference tensors and encode the IC-LoRA guide locally.",
+    )
+    smoke_case_inputs.add_argument("--case-dir", default="sample_cases/validition_v1_01")
+    smoke_case_inputs.add_argument("--width", type=int, default=64)
+    smoke_case_inputs.add_argument("--height", type=int, default=64)
+    smoke_case_inputs.add_argument("--frame-count", type=int, default=9)
+    smoke_case_inputs.add_argument("--latent-frames", type=int, default=8)
+    smoke_case_inputs.add_argument("--device", default="cpu")
 
     inspect_transformer = subparsers.add_parser(
         "inspect-ltxav-transformer",
@@ -244,6 +256,8 @@ def main(argv: list[str] | None = None) -> int:
         return _smoke_gemma_text_forward(args)
     if args.command == "smoke-text-conditioning":
         return _smoke_text_conditioning(args)
+    if args.command == "smoke-case-inputs":
+        return _smoke_case_inputs(args)
     if args.command == "inspect-ltxav-transformer":
         return _inspect_ltxav_transformer()
     if args.command == "inspect-ltxav-model":
@@ -631,6 +645,66 @@ def _smoke_text_conditioning(args: argparse.Namespace) -> int:
     print(f"text_conditioning_smoke_context_shape={tuple(context_output.context.shape)}")
     print(f"text_conditioning_smoke_attention_mask_shape={tuple(context_output.attention_mask.shape)}")
     print(f"text_conditioning_smoke_context_finite={bool(torch.isfinite(context_output.context).all().item())}")
+    return 0
+
+
+def _smoke_case_inputs(args: argparse.Namespace) -> int:
+    import torch
+
+    case_dir = Path(args.case_dir)
+    config = default_workflow_config()
+    state = build_low_level_state(config, device="cpu")
+    global_prompt, local_prompts = parse_reference_prompt_file(case_dir / "prompt.txt")
+    tokenizer = GemmaTokenizer.from_config_paths()
+    relay_plan = tokenizer.plan_prompt_relay_tokens(
+        global_prompt=global_prompt,
+        local_prompts=local_prompts,
+    )
+    token_plan = tokenizer.tokenize_with_weights(relay_plan.full_prompt, min_length=128)
+    reference = create_msr_reference_video_from_paths(
+        subjects=[case_dir / "1.jpg", case_dir / "2.jpg", None, None],
+        background=case_dir / "bg.png",
+        width=args.width,
+        height=args.height,
+        frame_count=args.frame_count,
+    )
+    latent_height = args.height // 32
+    latent_width = args.width // 32
+    if latent_height <= 0 or latent_width <= 0:
+        raise ValueError("width and height must be at least 32")
+    video_vae = build_ltx_video_vae_from_checkpoint(state.model_paths.checkpoint, device=args.device)
+    load_ltx_video_vae_weights(video_vae, state.model_paths.checkpoint, device=args.device)
+    video_vae.eval()
+    latent = {
+        "samples": torch.zeros(
+            (1, 128, args.latent_frames, latent_height, latent_width),
+            dtype=torch.float32,
+            device=args.device,
+        )
+    }
+    result = prepare_and_append_iclora_video_guide(
+        video_vae=video_vae,
+        positive=[[torch.zeros(1, 2, 4), {}]],
+        negative=[[torch.zeros(1, 2, 4), {}]],
+        latent=latent,
+        image=reference,
+        frame_idx=config.ic_lora_guide.frame_idx,
+        strength=config.ic_lora_guide.strength,
+        latent_downscale_factor=state.ic_lora.latent_downscale_factor,
+        crop=config.ic_lora_guide.crop,
+    )
+    print(f"case_inputs_case_dir={case_dir}")
+    print(f"case_inputs_reference_shape={tuple(reference.shape)}")
+    print(f"case_inputs_prompt_token_count={len(relay_plan.input_ids)}")
+    print(f"case_inputs_padded_token_count={len(token_plan.padded_input_ids)}")
+    print(f"case_inputs_local_prompt_count={len(relay_plan.local_prompts)}")
+    print(f"case_inputs_guide_pixels_shape={tuple(result.encoded_pixels.shape)}")
+    print(f"case_inputs_guide_latent_shape={tuple(result.guide_latent.shape)}")
+    print(f"case_inputs_appended_latent_shape={tuple(result.append.latent['samples'].shape)}")
+    print(f"case_inputs_noise_mask_shape={tuple(result.append.latent['noise_mask'].shape)}")
+    print(f"case_inputs_tokens_added={result.append.tokens_added}")
+    print(f"case_inputs_keyframe_shape={tuple(result.append.positive[0][1]['keyframe_idxs'].shape)}")
+    print(f"case_inputs_guide_finite={bool(torch.isfinite(result.guide_latent).all().item())}")
     return 0
 
 

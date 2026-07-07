@@ -161,6 +161,20 @@ normalized attention guidance formula and workflow patch target planning.
 Euler sampler utilities are available from `ltx_msr_torch.sampler`; model
 forward integration is intentionally separate from the deterministic step math.
 
+Build the bundled validation case inputs locally and encode the IC-LoRA guide
+with the real VideoVAE:
+
+```bash
+PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
+  smoke-case-inputs \
+  --case-dir sample_cases/validition_v1_01 \
+  --width 64 \
+  --height 64 \
+  --frame-count 9 \
+  --latent-frames 8 \
+  --device cpu
+```
+
 Run a minimal real-weight torch sampling smoke and write the decoded video with
 audio:
 
