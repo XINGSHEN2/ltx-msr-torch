@@ -3,6 +3,7 @@ import torch
 from ltx_msr_torch.ltx_vae import (
     build_ltx_audio_vae_from_checkpoint,
     build_ltx_video_vae_from_checkpoint,
+    decode_ltx_video_latents,
     load_checkpoint_config,
     load_ltxav_decoders_from_checkpoint,
     load_ltx_audio_vae_state_dict,
@@ -56,6 +57,18 @@ def test_load_ltxav_decoders_from_checkpoint_strict_loads_weights():
 
     assert tuple(decoders.video_vae.decoder.conv_in.conv.weight.shape) == (1024, 128, 3, 3, 3)
     assert decoders.audio_vae.output_sample_rate == 48000
+
+
+def test_video_vae_decode_smoke_runs_on_small_latents():
+    paths = resolve_workflow_model_paths(default_workflow_config())
+    decoders = load_ltxav_decoders_from_checkpoint(paths.checkpoint, device="cpu")
+    latents = torch.zeros((1, 128, 1, 1, 1), dtype=torch.float32)
+
+    frames = decode_ltx_video_latents(decoders.video_vae, latents)
+
+    assert frames.shape == (1, 3, 1, 32, 32)
+    assert frames.dtype == torch.float32
+    assert torch.isfinite(frames).all()
 
 
 def test_audio_vae_decode_smoke_runs_vocoder_on_small_latents():
