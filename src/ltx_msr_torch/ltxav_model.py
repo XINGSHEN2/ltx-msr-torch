@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import torch
@@ -84,9 +84,15 @@ def create_ltxav_model_from_checkpoint(
     *,
     dtype: torch.dtype | None = None,
     device: torch.device | str | None = "meta",
+    num_layers: int | None = None,
 ) -> LTXAVModel:
     manifest = inspect_ltxav_transformer_manifest(checkpoint_path)
-    return LTXAVModel(ltxav_model_config_from_manifest(manifest), dtype=dtype, device=device)
+    config = ltxav_model_config_from_manifest(manifest)
+    if num_layers is not None:
+        if num_layers < 0 or num_layers > config.num_layers:
+            raise ValueError(f"num_layers must be between 0 and {config.num_layers}, got {num_layers}")
+        config = replace(config, num_layers=num_layers)
+    return LTXAVModel(config, dtype=dtype, device=device)
 
 
 class LTXAVModel(torch.nn.Module):

@@ -91,6 +91,16 @@ def test_create_ltxav_model_from_checkpoint_on_meta_device():
     assert tuple(model.output_processor.audio_proj_out.weight.shape) == (128, 2048)
 
 
+def test_create_ltxav_model_from_checkpoint_can_limit_layers():
+    paths = resolve_workflow_model_paths(default_workflow_config())
+
+    model = create_ltxav_model_from_checkpoint(paths.checkpoint, device="meta", num_layers=1)
+
+    assert model.config.num_layers == 1
+    assert len(model.transformer_blocks) == 1
+    assert tuple(model.transformer_blocks[0].audio_attn1.to_q.weight.shape) == (2048, 2048)
+
+
 def test_ltxav_model_checkpoint_mapping_keys_exist_for_workflow_checkpoint():
     paths = resolve_workflow_model_paths(default_workflow_config())
     model = create_ltxav_model_from_checkpoint(paths.checkpoint, device="meta")

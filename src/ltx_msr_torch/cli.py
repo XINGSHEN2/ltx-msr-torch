@@ -10,7 +10,12 @@ from .gemma_tokenizer import GemmaTokenizer
 from .gemma_text_model import inspect_gemma_text_model_compatibility, load_gemma3_text_config
 from .local_state import build_low_level_state
 from .lora_apply import target_key_candidates
-from .ltxav_model import create_ltxav_model_from_checkpoint, ltxav_model_local_key, missing_ltxav_model_checkpoint_keys
+from .ltxav_model import (
+    create_ltxav_model_from_checkpoint,
+    load_ltxav_model_weights_streaming,
+    ltxav_model_local_key,
+    missing_ltxav_model_checkpoint_keys,
+)
 from .ltxav_transformer import inspect_ltxav_transformer_manifest
 from .ltx_vae import (
     build_ltx_audio_vae_from_checkpoint,
@@ -159,6 +164,14 @@ def main(argv: list[str] | None = None) -> int:
         "inspect-ltxav-pipeline",
         help="Verify the local torch LTXAV model, sampler adapter, and decoders can be wired together.",
     )
+    smoke_ltxav_model_forward = subparsers.add_parser(
+        "smoke-ltxav-model-forward",
+        help="Load a prefix of the real LTXAV transformer weights and run a minimal torch forward pass.",
+    )
+    smoke_ltxav_model_forward.add_argument("--layers", type=int, default=1)
+    smoke_ltxav_model_forward.add_argument("--device", default="cpu")
+    smoke_ltxav_model_forward.add_argument("--dtype", choices=("bf16", "fp16", "fp32"), default="bf16")
+    smoke_ltxav_model_forward.add_argument("--enable-av-cross", action="store_true")
 
     args = parser.parse_args(argv)
     if args.command == "build-reference":
@@ -197,6 +210,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_ltxav_decoders()
     if args.command == "inspect-ltxav-pipeline":
         return _inspect_ltxav_pipeline()
+    if args.command == "smoke-ltxav-model-forward":
+        return _smoke_ltxav_model_forward(args)
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -563,4 +578,76 @@ def _inspect_ltxav_pipeline() -> int:
     print(f"ltxav_pipeline_denoiser_type={denoiser.__class__.__name__}")
     print(f"ltxav_pipeline_sample_entry={sample_ltxav_euler.__name__}")
     print(f"ltxav_pipeline_decode_entry={decode_ltxav_latents.__name__}")
+    return 0
+
+
+def _torch_dtype_from_cli(value: str):
+    import torch
+
+    if value == "bf16":
+        return torch.bfloat16
+    if value == "fp16":
+        return torch.float16
+    if value == "fp32":
+        return torch.float32
+    raise ValueError(f"unsupported dtype: {value}")
+
+
+def _smoke_ltxav_model_forward(args: argparse.Namespace) -> int:
+    import torch
+
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    dtype = _torch_dtype_from_cli(args.dtype)
+    device = torch.device(args.device)
+    model = create_ltxav_model_from_checkpoint(
+        state.model_paths.checkpoint,
+        dtype=dtype,
+        device="meta",
+        num_layers=args.layers,
+    )
+    report = load_ltxav_model_weights_streaming(
+        model,
+        state.model_paths.checkpoint,
+        device=device,
+        assign=True,
+    )
+    model.eval()
+    options = {
+        "a2v_cross_attn": bool(args.enable_av_cross),
+        "v2a_cross_attn": bool(args.enable_av_cross),
+    }
+    video_latents = torch.zeros((1, model.config.video_in_channels, 1, 1, 1), device=device, dtype=dtype)
+    audio_latents = torch.zeros((1, model.config.audio_channels, 1, model.config.audio_frequency), device=device, dtype=dtype)
+    context = torch.zeros(
+        (1, 1, model.config.video_context_dim + model.config.audio_context_dim),
+        device=device,
+        dtype=dtype,
+    )
+    attention_mask = torch.ones((1, 1), device=device, dtype=torch.long)
+    timestep = torch.full((1, 1), 0.1, device=device, dtype=dtype)
+    audio_timestep = torch.full((1, 1), 0.1, device=device, dtype=dtype)
+    with torch.inference_mode():
+        output = model(
+            video_latents=video_latents,
+            audio_latents=audio_latents,
+            context=context,
+            timestep=timestep,
+            audio_timestep=audio_timestep,
+            frame_rate=float(default_workflow_config().latent.frame_rate),
+            attention_mask=attention_mask,
+            transformer_options=options,
+        )
+    video_output = output[0] if isinstance(output, list) else output
+    audio_output = output[1] if isinstance(output, list) else None
+    print(f"ltxav_forward_smoke_checkpoint={state.model_paths.checkpoint}")
+    print(f"ltxav_forward_smoke_layers={model.config.num_layers}")
+    print(f"ltxav_forward_smoke_loaded_key_count={report.loaded}")
+    print(f"ltxav_forward_smoke_device={device}")
+    print(f"ltxav_forward_smoke_dtype={dtype}")
+    print(f"ltxav_forward_smoke_av_cross={bool(args.enable_av_cross)}")
+    print(f"ltxav_forward_smoke_video_shape={tuple(video_output.shape)}")
+    print(f"ltxav_forward_smoke_video_finite={bool(torch.isfinite(video_output).all().item())}")
+    if audio_output is not None:
+        print(f"ltxav_forward_smoke_audio_shape={tuple(audio_output.shape)}")
+        print(f"ltxav_forward_smoke_audio_finite={bool(torch.isfinite(audio_output).all().item())}")
     return 0
