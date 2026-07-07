@@ -2,9 +2,11 @@
 
 Standalone PyTorch-oriented reconstruction of the ComfyUI LTX 2.3 MSR workflow.
 
-This project is being converted in stages. The first stage extracts the stable,
-non-model parts of the workflow into normal Python code and records the exact
-ComfyUI node parameters needed for parity.
+This project is being converted in stages. It now contains local PyTorch
+replacements for the workflow tensor preparation, text conditioning,
+LTXAV model wiring, IC-LoRA guide injection, sampling, VAE decode, and smoke
+video writing paths. ComfyUI remains useful as the parity reference and for
+API-prompt comparison, but the main reconstruction code runs locally in torch.
 
 ## Current Status
 
@@ -20,14 +22,23 @@ ComfyUI node parameters needed for parity.
   encoder, LoRA, and audio VAE checkpoint files.
 - Implemented: workflow parity config for the sampled ComfyUI graph.
 - Implemented: ComfyUI UI-workflow to API-prompt conversion for MSR case tests.
-- Pending: direct LTX 2.3 model load, PromptRelay conditioning, IC-LoRA guide,
-  NAG patch, sampler, VAE decode, and mp4 writing.
+- Implemented: Gemma tokenizer/text model loading, text projection, PromptRelay
+  token planning, and LTXAV text embedding connectors.
+- Implemented: LTXAV transformer construction, streaming checkpoint load,
+  LoRA application, LTXAV input/output projection, timestep/rope preparation,
+  tuple Euler sampling, and VAE video/audio decode.
+- Implemented: IC-LoRA video guide planning, real VideoVAE guide encode,
+  keyframe/guide attention metadata injection, and decoded mp4 smoke output.
+- Remaining: full-size end-to-end generation still needs practical GPU runtime
+  validation and audio muxing into the written mp4.
 
 The intended path is:
 
-1. Build and verify tensors that are independent of ComfyUI.
-2. Add a compatibility runner that calls the existing ComfyUI node classes.
-3. Replace each compatibility call with local PyTorch code, one module at a time.
+1. Keep comparing parity-critical tensor shapes and metadata against ComfyUI.
+2. Run small torch smoke tests with real checkpoint sections after each module
+   replacement.
+3. Scale the same torch path to the full validation case once the runtime
+   budget and GPU memory are available.
 
 ## Usage
 
@@ -148,6 +159,23 @@ normalized attention guidance formula and workflow patch target planning.
 
 Euler sampler utilities are available from `ltx_msr_torch.sampler`; model
 forward integration is intentionally separate from the deterministic step math.
+
+Run a minimal real-weight torch sampling smoke and write the decoded video:
+
+```bash
+PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
+  smoke-ltxav-sampling \
+  --layers 1 \
+  --device cpu \
+  --dtype bf16 \
+  --apply-lora \
+  --decode \
+  --output-video outputs/smoke_ltxav_sampling.mp4
+```
+
+This smoke intentionally uses one transformer layer and a 1x1 latent grid so it
+verifies wiring, LoRA application, decode, and mp4 output without attempting the
+full 22B workflow resolution.
 
 ## Parity Notes
 
