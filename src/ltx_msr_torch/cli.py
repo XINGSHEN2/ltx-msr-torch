@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 from pathlib import Path
 
 from .checkpoint_loader import apply_lora_to_checkpoint_subset, inspect_checkpoint_manifest
@@ -114,6 +115,10 @@ def main(argv: list[str] | None = None) -> int:
     inspect_models = subparsers.add_parser(
         "inspect-model-headers",
         help="Inspect workflow safetensors headers without loading full weights.",
+    )
+    inspect_runtime = subparsers.add_parser(
+        "inspect-runtime",
+        help="Inspect local torch/CUDA/ffmpeg runtime availability.",
     )
 
     inspect_lora = subparsers.add_parser(
@@ -236,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_local_state(args)
     if args.command == "inspect-model-headers":
         return _inspect_model_headers()
+    if args.command == "inspect-runtime":
+        return _inspect_runtime()
     if args.command == "inspect-lora-manifest":
         return _inspect_lora_manifest()
     if args.command == "inspect-checkpoint":
@@ -385,6 +392,22 @@ def _inspect_model_headers() -> int:
         print(f"{label}_key_count={item.key_count}")
         print(f"{label}_first_keys={list(item.first_keys)}")
         print(f"{label}_metadata_keys={sorted((item.metadata or {}).keys())}")
+    return 0
+
+
+def _inspect_runtime() -> int:
+    import os
+    import torch
+
+    print(f"torch_version={torch.__version__}")
+    print(f"torch_cuda_version={torch.version.cuda}")
+    print(f"torch_cuda_available={torch.cuda.is_available()}")
+    print(f"torch_cuda_device_count={torch.cuda.device_count()}")
+    print(f"cuda_visible_devices={os.environ.get('CUDA_VISIBLE_DEVICES')}")
+    print(f"ffmpeg={shutil.which('ffmpeg')}")
+    if torch.cuda.is_available():
+        for index in range(torch.cuda.device_count()):
+            print(f"cuda_device_{index}_name={torch.cuda.get_device_name(index)}")
     return 0
 
 
