@@ -7,7 +7,12 @@ from .checkpoint_loader import apply_lora_to_checkpoint_subset, inspect_checkpoi
 from .comfy_api_prompt import build_case_api_prompt, save_api_prompt
 from .comfy_client import load_api_prompt, queue_prompt, wait_for_history
 from .gemma_tokenizer import GemmaTokenizer
-from .gemma_text_model import inspect_gemma_text_model_compatibility, load_gemma3_text_config
+from .gemma_text_model import (
+    build_empty_gemma3_text_model,
+    inspect_gemma_text_model_compatibility,
+    load_gemma3_text_config,
+    load_gemma_text_model_weights_streaming,
+)
 from .local_state import build_low_level_state
 from .lora_apply import target_key_candidates
 from .ltxav_model import (
@@ -147,6 +152,14 @@ def main(argv: list[str] | None = None) -> int:
         "inspect-gemma-text-model",
         help="Inspect local Transformers Gemma3 text model compatibility with workflow weights.",
     )
+    smoke_gemma_text_forward = subparsers.add_parser(
+        "smoke-gemma-text-forward",
+        help="Load a prefix of the real Gemma text encoder weights and run a minimal torch forward pass.",
+    )
+    smoke_gemma_text_forward.add_argument("--layers", type=int, default=1)
+    smoke_gemma_text_forward.add_argument("--tokens", type=int, default=8)
+    smoke_gemma_text_forward.add_argument("--device", default="cpu")
+    smoke_gemma_text_forward.add_argument("--case-dir", default="sample_cases/validition_v1_01")
 
     inspect_transformer = subparsers.add_parser(
         "inspect-ltxav-transformer",
@@ -202,6 +215,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_text_conditioning(args)
     if args.command == "inspect-gemma-text-model":
         return _inspect_gemma_text_model()
+    if args.command == "smoke-gemma-text-forward":
+        return _smoke_gemma_text_forward(args)
     if args.command == "inspect-ltxav-transformer":
         return _inspect_ltxav_transformer()
     if args.command == "inspect-ltxav-model":
@@ -473,6 +488,48 @@ def _inspect_gemma_text_model() -> int:
     print(f"gemma_text_exact_key_match={compatibility.is_exact_match}")
     print(f"gemma_text_missing_hf_key_count={len(compatibility.missing_hf_keys)}")
     print(f"gemma_text_unexpected_checkpoint_key_count={len(compatibility.unexpected_checkpoint_keys)}")
+    return 0
+
+
+def _smoke_gemma_text_forward(args: argparse.Namespace) -> int:
+    import torch
+
+    state = build_low_level_state(default_workflow_config(), device="cpu")
+    global_prompt, local_prompts = parse_reference_prompt_file(Path(args.case_dir) / "prompt.txt")
+    tokenizer = GemmaTokenizer.from_config_paths()
+    relay_plan = tokenizer.plan_prompt_relay_tokens(
+        global_prompt=global_prompt,
+        local_prompts=local_prompts,
+    )
+    token_ids = relay_plan.input_ids[: args.tokens]
+    if not token_ids:
+        raise ValueError("prompt produced no Gemma token ids")
+    device = torch.device(args.device)
+    model = build_empty_gemma3_text_model(device=device, num_layers=args.layers)
+    report = load_gemma_text_model_weights_streaming(
+        model,
+        state.model_paths.text_encoder,
+        device=device,
+    )
+    model.eval()
+    input_ids = torch.tensor([token_ids], device=device, dtype=torch.long)
+    attention_mask = torch.ones_like(input_ids)
+    with torch.inference_mode():
+        output = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            output_hidden_states=True,
+        )
+    hidden_states = output.hidden_states
+    last_hidden = output.last_hidden_state
+    print(f"gemma_forward_smoke_text_encoder={state.model_paths.text_encoder}")
+    print(f"gemma_forward_smoke_layers={model.config.num_hidden_layers}")
+    print(f"gemma_forward_smoke_loaded_key_count={report.loaded}")
+    print(f"gemma_forward_smoke_device={device}")
+    print(f"gemma_forward_smoke_token_count={input_ids.shape[1]}")
+    print(f"gemma_forward_smoke_hidden_state_count={len(hidden_states)}")
+    print(f"gemma_forward_smoke_last_hidden_shape={tuple(last_hidden.shape)}")
+    print(f"gemma_forward_smoke_last_hidden_finite={bool(torch.isfinite(last_hidden).all().item())}")
     return 0
 
 
