@@ -5,14 +5,15 @@ from typing import Iterable
 
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageOps, ImageSequence
 
 
 def load_image_tensor(path: str | Path) -> torch.Tensor:
     """Load an image as a ComfyUI-style image tensor: [1, H, W, C], float32."""
-    image = Image.open(path).convert("RGB")
-    array = np.asarray(image, dtype=np.float32) / 255.0
-    return torch.from_numpy(array).unsqueeze(0)
+    av_tensor = _load_image_tensor_with_av(path)
+    if av_tensor is not None:
+        return av_tensor
+    return _load_image_tensor_with_pil(path)
 
 
 def create_msr_reference_video(
@@ -88,6 +89,63 @@ def _tensor_to_rgb_array(image: torch.Tensor | np.ndarray | Image.Image) -> np.n
     return np.ascontiguousarray(array)
 
 
+def _load_image_tensor_with_av(path: str | Path) -> torch.Tensor | None:
+    """Match ComfyUI LoadImage's preferred PyAV decode path for still images."""
+    try:
+        import av
+    except ImportError:
+        return None
+
+    try:
+        with av.open(str(path), mode="r") as container:
+            video_stream = next((stream for stream in container.streams if stream.type == "video"), None)
+            if video_stream is None:
+                return None
+
+            frames: list[torch.Tensor] = []
+            image_format = "gbrpf32le"
+            process_image_format = lambda value: value
+            checked_format = False
+
+            for packet in container.demux(video_stream):
+                for frame in packet.decode():
+                    if not checked_format:
+                        if frame.format.name in ("yuvj420p", "yuvj422p", "yuvj444p", "rgb24", "rgba", "pal8"):
+                            image_format = "rgb24"
+                            process_image_format = lambda value: value.float() / 255.0
+                        checked_format = True
+
+                    image = frame.to_ndarray(format=image_format)
+                    rotation = getattr(frame, "rotation", 0)
+                    if rotation:
+                        image = np.rot90(image, k=int(round(rotation // 90)), axes=(0, 1)).copy()
+                    frames.append(torch.from_numpy(np.ascontiguousarray(image[..., :3])))
+
+            if not frames:
+                return None
+            return process_image_format(torch.stack(frames)).to(dtype=torch.float32)
+    except Exception:
+        return None
+
+
+def _load_image_tensor_with_pil(path: str | Path) -> torch.Tensor:
+    image = Image.open(path)
+    frames: list[torch.Tensor] = []
+    width = None
+    height = None
+    for frame in ImageSequence.Iterator(image):
+        frame = ImageOps.exif_transpose(frame).convert("RGB")
+        if width is None:
+            width, height = frame.size
+        if frame.size != (width, height):
+            continue
+        array = np.asarray(frame, dtype=np.float32) / 255.0
+        frames.append(torch.from_numpy(array))
+    if not frames:
+        raise ValueError(f"failed to load image frames from {path}")
+    return torch.stack(frames)
+
+
 def _prepare_image(
     image: torch.Tensor | np.ndarray | Image.Image,
     width: int,
@@ -119,4 +177,3 @@ def _expand_frames(images: list[np.ndarray], frame_count: int) -> list[np.ndarra
         repeats = base_count + (1 if index < remainder else 0)
         frames.extend([image] * repeats)
     return frames
-

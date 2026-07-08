@@ -38,6 +38,10 @@ class LTXAVTransformerConfig:
     connector_num_learnable_registers: int
     cross_attention_adaln: bool
     apply_gated_attention: bool
+    causal_temporal_positioning: bool
+    use_middle_indices_grid: bool
+    timestep_scale_multiplier: float
+    av_ca_timestep_scale_multiplier: float
     rope_type: str
     frequencies_precision: str
 
@@ -112,6 +116,10 @@ def infer_ltxav_transformer_config(
         connector_num_learnable_registers=int(merged["connector_num_learnable_registers"]),
         cross_attention_adaln=bool(merged["cross_attention_adaln"]),
         apply_gated_attention=bool(merged["apply_gated_attention"]),
+        causal_temporal_positioning=bool(merged.get("causal_temporal_positioning", False)),
+        use_middle_indices_grid=bool(merged.get("use_middle_indices_grid", False)),
+        timestep_scale_multiplier=float(merged.get("timestep_scale_multiplier", 1000.0)),
+        av_ca_timestep_scale_multiplier=float(merged.get("av_ca_timestep_scale_multiplier", 1.0)),
         rope_type=str(merged["rope_type"]),
         frequencies_precision=str(merged["frequencies_precision"]),
     )

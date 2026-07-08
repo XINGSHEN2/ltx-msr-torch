@@ -54,7 +54,7 @@ def prepare_ltxav_positional_embeddings(
     positional_embedding_theta: float = 10000.0,
     video_max_pos: tuple[int, int, int] = (20, 2048, 2048),
     audio_max_pos: tuple[int] = (20,),
-    use_middle_indices_grid: bool = True,
+    use_middle_indices_grid: bool = False,
     split_rope: bool = True,
     double_precision_grid: bool = True,
 ) -> tuple[
@@ -129,6 +129,8 @@ def prepare_ltxav_block_inputs(
     keyframe_idxs: torch.Tensor | None = None,
     denoise_mask: torch.Tensor | None = None,
     guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
+    causal_temporal_positioning: bool = False,
+    use_middle_indices_grid: bool = False,
 ) -> LTXAVPreparedBlockInputs:
     projected = input_projection(
         video_latents,
@@ -136,6 +138,7 @@ def prepare_ltxav_block_inputs(
         keyframe_idxs=keyframe_idxs,
         denoise_mask=denoise_mask,
         guide_attention_entries=guide_attention_entries,
+        causal_temporal_positioning=causal_temporal_positioning,
     )
     video_context, audio_context = split_ltxav_context(context, video_dim=video_dim, audio_dim=audio_dim)
     prepared_mask = prepare_attention_mask(attention_mask, projected.video_tokens.dtype)
@@ -148,6 +151,7 @@ def prepare_ltxav_block_inputs(
         audio_cross_dim=audio_cross_dim,
         video_heads=video_heads,
         audio_heads=audio_heads,
+        use_middle_indices_grid=use_middle_indices_grid,
     )
     return LTXAVPreparedBlockInputs(
         projected=projected,

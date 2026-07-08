@@ -54,7 +54,7 @@ class LTXAVInputProjection(torch.nn.Module):
         denoise_mask: torch.Tensor | None = None,
         guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
         vae_scale_factors: tuple[int, int, int] = (8, 32, 32),
-        causal_temporal_positioning: bool = True,
+        causal_temporal_positioning: bool = False,
     ) -> LTXAVProjectedInputs:
         video: VideoPatchifyResult = symmetric_patchify_video(video_latents, patch_size=1, start_end=True)
         audio: AudioPatchifyResult = patchify_audio(audio_latents, start_end=True)

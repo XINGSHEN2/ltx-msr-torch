@@ -1,6 +1,11 @@
 import torch
 
-from ltx_msr_torch.ltxav_denoiser import LTXAVDenoiser, sample_ltxav_euler
+from ltx_msr_torch.ltxav_denoiser import (
+    ComfyKSamplerX0Inpaint,
+    LTXAVDenoiser,
+    _const_noise_scaling,
+    sample_ltxav_euler,
+)
 
 
 class _FakeLTXAVModel:
@@ -10,6 +15,15 @@ class _FakeLTXAVModel:
     def __call__(self, **kwargs):
         self.calls.append(kwargs)
         return [kwargs["video_latents"] * 0.5, kwargs["audio_latents"] * 0.25]
+
+
+class _FakePackedGuider:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, x, sigma, *, model_options=None, seed=None):
+        self.calls.append((x.clone(), sigma.clone(), model_options, seed))
+        return x
 
 
 def test_ltxav_denoiser_builds_per_token_timesteps_and_returns_tuple():
@@ -23,8 +37,8 @@ def test_ltxav_denoiser_builds_per_token_timesteps_and_returns_tuple():
     output = denoiser((video, audio), torch.tensor([0.7]))
 
     assert isinstance(output, tuple)
-    assert torch.equal(output[0], video * 0.5)
-    assert torch.equal(output[1], audio * 0.25)
+    assert torch.allclose(output[0], video * 0.65)
+    assert torch.allclose(output[1], audio * 0.825)
     call = model.calls[0]
     assert call["context"] is context
     assert call["attention_mask"] is mask
@@ -76,6 +90,35 @@ def test_ltxav_denoiser_passes_keyframe_output_metadata():
     assert call["guide_attention_entries"] == ({"pre_filter_count": 1},)
 
 
+def test_comfy_ltxav_inpaint_feeds_latent_image_to_masked_regions():
+    guider = _FakePackedGuider()
+    noise = torch.tensor([[[2.0, 4.0, 6.0]]])
+    latent_image = torch.tensor([[[20.0, 40.0, 60.0]]])
+    denoise_mask = torch.tensor([[[1.0, 0.0, 0.0]]])
+    inpaint = ComfyKSamplerX0Inpaint(
+        inner_model=guider,
+        sigmas=torch.tensor([1.0, 0.5, 0.0]),
+        noise=noise,
+        latent_image=latent_image,
+        denoise_mask=denoise_mask,
+    )
+
+    output = inpaint(torch.full((1, 1, 3), 10.0), torch.tensor([0.5]))
+
+    seen = guider.calls[0][0]
+    assert torch.allclose(seen, torch.tensor([[[10.0, 40.0, 60.0]]]))
+    assert torch.allclose(output, torch.tensor([[[10.0, 40.0, 60.0]]]))
+
+
+def test_const_noise_scaling_matches_comfy_const_noise_scaling():
+    noise = torch.tensor([[[2.0, 4.0]]])
+    latent_image = torch.tensor([[[10.0, 20.0]]])
+
+    output = _const_noise_scaling(torch.tensor(0.25), noise, latent_image)
+
+    assert torch.allclose(output, torch.tensor([[[8.0, 16.0]]]))
+
+
 def test_sample_ltxav_euler_runs_adapter_and_tuple_sampler():
     model = _FakeLTXAVModel()
     video = torch.ones(1, 2, 1, 1, 1) * 4
@@ -92,6 +135,6 @@ def test_sample_ltxav_euler_runs_adapter_and_tuple_sampler():
     )
 
     assert isinstance(out, tuple)
-    assert torch.allclose(out[0], torch.ones_like(video) * 1.5)
-    assert torch.allclose(out[1], torch.ones_like(audio) * 1.25)
+    assert torch.allclose(out[0], torch.ones_like(video))
+    assert torch.allclose(out[1], torch.ones_like(audio) * 4.5)
     assert len(model.calls) == 2

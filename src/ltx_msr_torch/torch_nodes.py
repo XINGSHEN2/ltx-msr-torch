@@ -101,8 +101,9 @@ def empty_ltxv_latent_audio(
         raise AssertionError("Audio VAE model is required")
 
     z_channels = audio_vae.latent_channels
-    audio_freq = audio_vae.first_stage_model.latent_frequency_bins
-    num_audio_latents = audio_vae.first_stage_model.num_of_latents_from_frames(
+    first_stage_model = getattr(audio_vae, "first_stage_model", audio_vae)
+    audio_freq = first_stage_model.latent_frequency_bins
+    num_audio_latents = first_stage_model.num_of_latents_from_frames(
         frames_number,
         frame_rate,
     )

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ltx_msr_torch.comfy_api_prompt import build_case_api_prompt
+from tools.comfy_api_prompt import build_case_api_prompt
 from ltx_msr_torch.msr_reference import create_msr_reference_video_from_paths
 from ltx_msr_torch.prompt_utils import parse_reference_prompt_file
 
@@ -41,4 +41,3 @@ def test_project_sample_case_builds_api_prompt():
     assert prompt["40"]["inputs"]["image"].endswith("sample_cases/validition_v1_01/2.jpg")
     assert prompt["30"]["inputs"]["image"].endswith("sample_cases/validition_v1_01/bg.png")
     assert prompt["20"]["inputs"]["filename_prefix"] == "LTX-2/test_project_sample"
-

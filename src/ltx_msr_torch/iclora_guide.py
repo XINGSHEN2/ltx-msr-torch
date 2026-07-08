@@ -192,7 +192,7 @@ def add_guide_attention_entry(
         {
             "pre_filter_count": int(pre_filter_count),
             "strength": float(attention_strength),
-            "pixel_mask": attention_mask,
+            "pixel_mask": attention_mask.unsqueeze(0).unsqueeze(0) if attention_mask is not None else None,
             "latent_shape": [int(value) for value in latent_shape],
         }
     )
@@ -286,8 +286,18 @@ def append_iclora_keyframe(
     noise_mask = torch.cat([noise_mask, mask], dim=2)
     guide_orig_shape = tuple(int(value) for value in guiding_latent.shape[2:])
     tokens_added = int(guiding_latent.shape[2] * guiding_latent.shape[3] * guiding_latent.shape[4])
-    positive = add_guide_attention_entry(positive, pre_filter_count=tokens_added, latent_shape=guide_orig_shape)
-    negative = add_guide_attention_entry(negative, pre_filter_count=tokens_added, latent_shape=guide_orig_shape)
+    positive = add_guide_attention_entry(
+        positive,
+        pre_filter_count=tokens_added,
+        latent_shape=guide_orig_shape,
+        attention_strength=strength,
+    )
+    negative = add_guide_attention_entry(
+        negative,
+        pre_filter_count=tokens_added,
+        latent_shape=guide_orig_shape,
+        attention_strength=strength,
+    )
     return ICLoRAGuideAppendResult(
         positive=positive,
         negative=negative,
@@ -361,10 +371,22 @@ def resize_video_pixels(
 ) -> torch.Tensor:
     if pixels.ndim != 4 or pixels.shape[-1] != 3:
         raise ValueError(f"expected pixels [T,H,W,3], got {tuple(pixels.shape)}")
-    if crop != "center":
+    if crop not in {"center", "disabled"}:
         raise ValueError(f"unsupported crop mode: {crop}")
     nchw = pixels.movedim(-1, 1)
-    resized = F.interpolate(nchw, size=(height, width), mode="bilinear", align_corners=False)
+    if crop == "center":
+        old_width = int(nchw.shape[-1])
+        old_height = int(nchw.shape[-2])
+        old_aspect = old_width / old_height
+        new_aspect = width / height
+        x = 0
+        y = 0
+        if old_aspect > new_aspect:
+            x = round((old_width - old_width * (new_aspect / old_aspect)) / 2)
+        elif old_aspect < new_aspect:
+            y = round((old_height - old_height * (old_aspect / new_aspect)) / 2)
+        nchw = nchw.narrow(-2, y, old_height - y * 2).narrow(-1, x, old_width - x * 2)
+    resized = F.interpolate(nchw, size=(height, width), mode="bilinear")
     return resized.movedim(1, -1)
 
 

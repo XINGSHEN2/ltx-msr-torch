@@ -193,6 +193,20 @@ This smoke intentionally uses one transformer layer and a 1x1 latent grid so it
 verifies wiring, LoRA application, video/audio decode, AAC muxing, and mp4
 output without attempting the full 22B workflow resolution.
 
+Run the bundled `validition_v1/01` case through the local torch MSR path and
+write a decoded mp4:
+
+```bash
+PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
+  generate-msr-case \
+  --case-dir /home/xingshen/ComfyUI/input/ltx_msr_validition_v1/01 \
+  --output-video outputs/msr_case_01_torch.mp4
+```
+
+By default this uses a practical validation size (`256x384`, 41 frames) with
+all 48 LTXAV transformer layers, the workflow NAG settings, and the full sigma
+schedule. For a quick wiring check, add `--layers 1 --max-sigmas 2`.
+
 ## Parity Notes
 
 The source ComfyUI workflow uses:

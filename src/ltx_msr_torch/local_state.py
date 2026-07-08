@@ -77,7 +77,7 @@ def build_low_level_state(
         inplace=config.nag.inplace,
         transformer_block_count=transformer_block_count,
         has_video_conditioning=True,
-        has_audio_conditioning=False,
+        has_audio_conditioning=True,
     )
     sampler = build_sampler_plan(
         sampler_name=config.sampling.sampler,

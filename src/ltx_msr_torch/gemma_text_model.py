@@ -7,8 +7,9 @@ from typing import Iterable
 
 import torch
 from safetensors import safe_open
-from transformers import Gemma3TextConfig, Gemma3TextModel
+from transformers import Gemma3TextConfig
 
+from .comfy_gemma_text_model import ComfyGemma3TextModel, build_comfy_gemma3_text_model
 from .model_paths import LocalModelPaths, resolve_workflow_model_paths
 from .text_encoder_sections import TextEncoderConfigPaths, resolve_text_encoder_config_paths
 from .workflow_config import WorkflowConfig, default_workflow_config
@@ -50,21 +51,18 @@ def build_empty_gemma3_text_model(
     device: torch.device | str = "meta",
     dtype: torch.dtype | None = None,
     num_layers: int | None = None,
-) -> Gemma3TextModel:
+) -> ComfyGemma3TextModel:
     resolved_config = config or load_gemma3_text_config()
-    if num_layers is not None:
-        if num_layers < 0 or num_layers > resolved_config.num_hidden_layers:
-            raise ValueError(f"num_layers must be between 0 and {resolved_config.num_hidden_layers}, got {num_layers}")
-        data = resolved_config.to_dict()
-        if "layer_types" in data and data["layer_types"] is not None:
-            data["layer_types"] = data["layer_types"][:num_layers]
-        resolved_config = Gemma3TextConfig(**{**data, "num_hidden_layers": num_layers})
     original_dtype = torch.get_default_dtype()
     if dtype is not None:
         torch.set_default_dtype(dtype)
     try:
-        with torch.device(device):
-            model = Gemma3TextModel(resolved_config)
+        model = build_comfy_gemma3_text_model(
+            resolved_config,
+            device=device,
+            dtype=dtype,
+            num_layers=num_layers,
+        )
     finally:
         if dtype is not None:
             torch.set_default_dtype(original_dtype)
@@ -167,7 +165,7 @@ def _assign_state_tensor(
 
 
 def load_gemma_text_model_weights_streaming(
-    model: Gemma3TextModel,
+    model: ComfyGemma3TextModel,
     text_encoder_path: str | Path,
     *,
     device: str | torch.device = "cpu",

@@ -9,6 +9,7 @@ from safetensors import safe_open
 from .checkpoint_loader import load_safetensors_subset
 from .lora_apply import lora_pair_delta, target_key_candidates
 from .lora_loader import LoRAManifest
+from .ltx_attention import GuideAttentionMask
 from .ltx_blocks import BasicAVTransformerBlock
 from .ltx_timestep import ADALN_CROSS_ATTN_PARAMS_COUNT, AdaLayerNormSingle
 from .ltxav_io import LTXAVInputProjection
@@ -39,6 +40,8 @@ class LTXAVModelConfig:
     apply_gated_attention: bool = True
     timestep_scale_multiplier: float = 1000.0
     av_ca_timestep_scale_multiplier: float = 1.0
+    causal_temporal_positioning: bool = False
+    use_middle_indices_grid: bool = False
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,10 @@ def ltxav_model_config_from_manifest(manifest: LTXAVTransformerManifest) -> LTXA
         audio_out_channels=audio_out_channels,
         cross_attention_adaln=config.cross_attention_adaln,
         apply_gated_attention=config.apply_gated_attention,
+        timestep_scale_multiplier=config.timestep_scale_multiplier,
+        av_ca_timestep_scale_multiplier=config.av_ca_timestep_scale_multiplier,
+        causal_temporal_positioning=config.causal_temporal_positioning,
+        use_middle_indices_grid=config.use_middle_indices_grid,
     )
 
 
@@ -225,6 +232,8 @@ class LTXAVModel(torch.nn.Module):
             keyframe_idxs=keyframe_idxs,
             denoise_mask=denoise_mask,
             guide_attention_entries=guide_attention_entries,
+            causal_temporal_positioning=config.causal_temporal_positioning,
+            use_middle_indices_grid=config.use_middle_indices_grid,
         )
         grid_mask = grid_mask if grid_mask is not None else prepared.grid_mask
         orig_patchified_shape = orig_patchified_shape if orig_patchified_shape is not None else prepared.orig_patchified_shape
@@ -241,8 +250,9 @@ class LTXAVModel(torch.nn.Module):
             video_prompt_adaln_single=self.video_prompt_adaln_single,
             audio_prompt_adaln_single=self.audio_prompt_adaln_single,
             audio_timestep=audio_timestep,
+            grid_mask=grid_mask,
             orig_shape=tuple(video_latents.shape),
-            has_spatial_mask=False,
+            has_spatial_mask=_has_spatial_denoise_mask(denoise_mask),
             ref_audio_seq_len=ref_audio_seq_len,
             target_audio_seq_len=target_audio_seq_len,
             timestep_scale_multiplier=config.timestep_scale_multiplier,
@@ -250,7 +260,17 @@ class LTXAVModel(torch.nn.Module):
         )
         video_tokens = prepared.projected.video_tokens
         audio_tokens = prepared.projected.audio_tokens
-        for block in self.transformer_blocks:
+        debug_trace = _debug_trace_from_options(transformer_options)
+        if debug_trace is not None:
+            _append_model_debug_trace(debug_trace, stage="input", index=-1, video=video_tokens, audio=audio_tokens)
+        guide_self_attention_mask = self_attention_mask
+        if guide_self_attention_mask is None:
+            guide_self_attention_mask = self._build_guide_self_attention_mask(
+                video_tokens,
+                num_guide_tokens=prepared.projected.num_guide_tokens,
+                resolved_entries=prepared.projected.resolved_guide_entries,
+            )
+        for block_index, block in enumerate(self.transformer_blocks):
             video_tokens, audio_tokens = block(
                 (video_tokens, audio_tokens),
                 video_context=prepared.video_context,
@@ -267,10 +287,18 @@ class LTXAVModel(torch.nn.Module):
                 video_cross_gate_timestep=timesteps.video_cross_gate_timestep,
                 audio_cross_gate_timestep=timesteps.audio_cross_gate_timestep,
                 transformer_options=transformer_options,
-                self_attention_mask=self_attention_mask,
+                self_attention_mask=guide_self_attention_mask,
                 video_prompt_timestep=timesteps.video_prompt_timestep,
                 audio_prompt_timestep=timesteps.audio_prompt_timestep,
             )
+            if debug_trace is not None:
+                _append_model_debug_trace(
+                    debug_trace,
+                    stage="block",
+                    index=block_index,
+                    video=video_tokens,
+                    audio=audio_tokens,
+                )
         return self.output_processor(
             video_tokens,
             audio_tokens,
@@ -284,6 +312,156 @@ class LTXAVModel(torch.nn.Module):
             audio_channels=config.audio_channels,
             audio_frequency=config.audio_frequency,
         )
+
+    @staticmethod
+    def _build_guide_self_attention_mask(
+        video_tokens: torch.Tensor,
+        *,
+        num_guide_tokens: int,
+        resolved_entries: tuple[dict[str, object], ...],
+    ) -> GuideAttentionMask | None:
+        if num_guide_tokens == 0 or not resolved_entries:
+            return None
+        needs_mask = any(
+            float(entry["strength"]) != 1.0 or entry.get("pixel_mask") is not None
+            for entry in resolved_entries
+        )
+        if not needs_mask:
+            return None
+
+        total_tokens = int(video_tokens.shape[1])
+        guide_start = total_tokens - int(num_guide_tokens)
+        weights: list[torch.Tensor] = []
+        tracked = 0
+        for entry in resolved_entries:
+            surviving = int(entry["surviving_count"])
+            if surviving == 0:
+                continue
+            strength = float(entry["strength"])
+            pixel_mask = entry.get("pixel_mask")
+            latent_shape = entry.get("latent_shape")
+            if isinstance(pixel_mask, torch.Tensor) and latent_shape is not None:
+                f_lat, h_lat, w_lat = (int(value) for value in latent_shape)  # type: ignore[arg-type]
+                per_token = LTXAVModel._downsample_mask_to_latent(
+                    pixel_mask.to(device=video_tokens.device, dtype=video_tokens.dtype),
+                    f_lat,
+                    h_lat,
+                    w_lat,
+                )
+                if per_token.shape[0] > 1:
+                    per_token = per_token[:1]
+                n_weights = min(int(per_token.shape[1]), surviving)
+                entry_weights = per_token[:, :n_weights] * strength
+            else:
+                entry_weights = torch.full(
+                    (1, surviving),
+                    strength,
+                    device=video_tokens.device,
+                    dtype=video_tokens.dtype,
+                )
+            weights.append(entry_weights)
+            tracked += int(entry_weights.shape[1])
+
+        if not weights:
+            return None
+        tracked_weights = torch.cat(weights, dim=1)
+        if bool((tracked_weights == 1.0).all().item()):
+            return None
+        return GuideAttentionMask(total_tokens, guide_start, tracked, tracked_weights)
+
+    @staticmethod
+    def _downsample_mask_to_latent(mask: torch.Tensor, f_lat: int, h_lat: int, w_lat: int) -> torch.Tensor:
+        batch = int(mask.shape[0])
+        f_pix = int(mask.shape[2])
+        spatial = mask.permute(0, 2, 1, 3, 4).reshape(batch * f_pix, 1, mask.shape[3], mask.shape[4])
+        spatial_down = torch.nn.functional.interpolate(spatial, size=(h_lat, w_lat), mode="area")
+        spatial_down = spatial_down.reshape(batch, f_pix, 1, h_lat, w_lat).permute(0, 2, 1, 3, 4)
+
+        first_frame = spatial_down[:, :, :1, :, :]
+        if f_pix > 1 and f_lat > 1:
+            remaining_pix = f_pix - 1
+            remaining_lat = f_lat - 1
+            group = remaining_pix // remaining_lat
+            if group < 1:
+                rest_flat = spatial_down[:, :, 1:, :, :].permute(0, 3, 4, 1, 2).reshape(batch * h_lat * w_lat, 1, -1)
+                rest_up = torch.nn.functional.interpolate(rest_flat, size=remaining_lat, mode="nearest")
+                rest = rest_up.reshape(batch, h_lat, w_lat, 1, remaining_lat).permute(0, 3, 4, 1, 2)
+            else:
+                usable = remaining_lat * group
+                rest = spatial_down[:, :, 1 : 1 + usable, :, :].reshape(
+                    batch,
+                    1,
+                    remaining_lat,
+                    group,
+                    h_lat,
+                    w_lat,
+                ).mean(dim=3)
+            latent_mask = torch.cat([first_frame, rest], dim=2)
+        elif f_lat > 1:
+            latent_mask = first_frame.expand(-1, -1, f_lat, -1, -1)
+        else:
+            latent_mask = first_frame
+        return latent_mask.reshape(batch, f_lat * h_lat * w_lat)
+
+
+def _has_spatial_denoise_mask(denoise_mask: torch.Tensor | None) -> bool:
+    if denoise_mask is None:
+        return False
+    for frame_idx in range(int(denoise_mask.shape[2])):
+        frame_mask = denoise_mask[0, 0, frame_idx]
+        if frame_mask.numel() > 0 and frame_mask.min() != frame_mask.max():
+            return True
+    return False
+
+
+def _debug_trace_from_options(transformer_options: dict[str, object] | None) -> list[dict[str, object]] | None:
+    if not isinstance(transformer_options, dict):
+        return None
+    trace = transformer_options.get("ltx_msr_debug_trace")
+    return trace if isinstance(trace, list) else None
+
+
+def _append_model_debug_trace(
+    trace: list[dict[str, object]],
+    *,
+    stage: str,
+    index: int,
+    video: torch.Tensor,
+    audio: torch.Tensor,
+) -> None:
+    trace.append(
+        {
+            "stage": stage,
+            "index": int(index),
+            "video": _trace_tensor_sample(video),
+            "audio": _trace_tensor_sample(audio),
+        }
+    )
+
+
+def _trace_tensor_sample(tensor: torch.Tensor) -> dict[str, object]:
+    token_count = int(tensor.shape[1])
+    dim_count = int(tensor.shape[2])
+    token_indices = _trace_indices(token_count, max_count=8, device=tensor.device)
+    dim_indices = _trace_indices(dim_count, max_count=16, device=tensor.device)
+    sample = tensor[0].index_select(0, token_indices).index_select(1, dim_indices).detach().cpu()
+    sample_float = sample.float()
+    return {
+        "shape": tuple(int(value) for value in tensor.shape),
+        "token_indices": tuple(int(value) for value in token_indices.detach().cpu().tolist()),
+        "dim_indices": tuple(int(value) for value in dim_indices.detach().cpu().tolist()),
+        "sample": sample,
+        "sample_mean": float(sample_float.mean().item()),
+        "sample_std": float(sample_float.std().item()),
+        "sample_absmax": float(sample_float.abs().max().item()),
+    }
+
+
+def _trace_indices(length: int, *, max_count: int, device: torch.device) -> torch.Tensor:
+    if length <= max_count:
+        return torch.arange(length, device=device, dtype=torch.long)
+    raw = torch.linspace(0, length - 1, steps=max_count, device=device)
+    return raw.round().to(dtype=torch.long).unique(sorted=True)
 
 
 def ltxav_model_checkpoint_key(model_state_key: str) -> str:
@@ -428,17 +606,19 @@ def apply_lora_to_ltxav_model(
             _, _, target, _ = _resolve_state_target(model, local_key)
             if target.is_meta:
                 raise ValueError(f"cannot apply LoRA to meta tensor: {local_key}")
-            lora_a = handle.get_tensor(pair.lora_a_key).to(device=target.device, dtype=torch.float32)
-            lora_b = handle.get_tensor(pair.lora_b_key).to(device=target.device, dtype=torch.float32)
+            compute_dtype = _comfy_lowvram_lora_compute_dtype(target.device, target.dtype)
+            lora_a = handle.get_tensor(pair.lora_a_key).to(device=target.device, dtype=compute_dtype)
+            lora_b = handle.get_tensor(pair.lora_b_key).to(device=target.device, dtype=compute_dtype)
             delta = lora_pair_delta(
                 lora_a,
                 lora_b,
                 target.shape,
                 alpha=pair.alpha,
                 strength=strength,
-            ).to(dtype=target.dtype)
+            ).to(dtype=compute_dtype)
             with torch.no_grad():
-                target.add_(delta)
+                patched = target.to(dtype=compute_dtype).add_(delta).to(dtype=target.dtype)
+                target.copy_(patched)
             applied.append(local_key)
     if strict and skipped:
         raise KeyError(f"LoRA targets not found in LTXAV model: {skipped[:8]}")
@@ -448,6 +628,15 @@ def apply_lora_to_ltxav_model(
         applied_keys=tuple(applied),
         skipped_targets=tuple(skipped),
     )
+
+
+def _comfy_lowvram_lora_compute_dtype(device: torch.device, target_dtype: torch.dtype) -> torch.dtype:
+    # The MSR workflow loads LTXAV through ComfyUI DynamicVRAM/LowVramPatch.
+    # In that path LoRA is calculated inside the layer's weight_function with
+    # intermediate_dtype=weight.dtype, not model_management.lora_compute_dtype.
+    if device.type == "cuda" and target_dtype in (torch.float16, torch.bfloat16):
+        return target_dtype
+    return torch.float32
 
 
 def load_ltxav_model_weights(

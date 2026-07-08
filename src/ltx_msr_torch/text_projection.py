@@ -50,10 +50,12 @@ class DualLinearTextProjection(torch.nn.Module):
             dtype=self.video_aggregate_embed.weight.dtype,
         )
 
-    def forward(self, hidden: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden: torch.Tensor, attention_mask: torch.Tensor | None = None) -> torch.Tensor:
         source_dim = hidden.shape[-1]
         x = hidden.movedim(1, -1)
         x = (x * torch.rsqrt(torch.mean(x**2, dim=2, keepdim=True) + 1e-6)).flatten(start_dim=2)
+        if attention_mask is not None:
+            x = torch.where(attention_mask.to(device=x.device).bool().unsqueeze(-1), x, torch.zeros_like(x))
         video = self.video_aggregate_embed(x * math.sqrt(self.video_aggregate_embed.out_features / source_dim))
         audio = self.audio_aggregate_embed(x * math.sqrt(self.audio_aggregate_embed.out_features / source_dim))
         return torch.cat((video, audio), dim=-1)

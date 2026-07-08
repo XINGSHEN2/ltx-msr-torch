@@ -5,8 +5,7 @@ import shutil
 from pathlib import Path
 
 from .checkpoint_loader import apply_lora_to_checkpoint_subset, inspect_checkpoint_manifest
-from .comfy_api_prompt import build_case_api_prompt, save_api_prompt
-from .comfy_client import load_api_prompt, queue_prompt, wait_for_history
+from .dtypes import torch_dtype_from_cli
 from .gemma_tokenizer import GemmaTokenizer
 from .gemma_text_model import (
     build_empty_gemma3_text_model,
@@ -34,11 +33,18 @@ from .ltx_vae import (
     load_ltx_video_vae_state_dict,
     missing_ltx_vae_keys,
 )
-from .ltxav_denoiser import LTXAVDenoiser, sample_ltxav_euler
-from .ltxav_pipeline import decode_ltxav_latents, run_ltxav_sample_decode
+from .ltxav_denoiser import (
+    LTXAVDenoiser,
+    sample_ltxav_euler,
+)
+from .ltxav_pipeline import (
+    decode_ltxav_latents,
+    run_ltxav_sample_decode,
+)
 from .lora_apply import match_lora_targets
 from .lora_loader import inspect_lora_manifest, resolve_lora_path
 from .model_inspect import inspect_workflow_model_headers
+from .msr_case import generate_msr_case
 from .msr_reference import create_msr_reference_video_from_paths
 from .iclora_guide import prepare_and_append_iclora_video_guide
 from .prompt_utils import parse_reference_prompt_file
@@ -47,6 +53,7 @@ from .text_conditioning import (
     build_text_conditioning_inputs_from_plan,
     attention_mask_tensor,
     connect_ltxav_text_embeddings,
+    encode_ltx_text_conditioning,
 )
 from .text_projection import build_text_projection_from_checkpoint
 from .vae_sections import inspect_vae_section
@@ -80,31 +87,6 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional ComfyUI workflow JSON to extract config from.",
     )
-
-    build_api_prompt = subparsers.add_parser(
-        "build-api-prompt",
-        help="Build a ComfyUI API prompt from the MSR workflow and a sample case.",
-    )
-    build_api_prompt.add_argument(
-        "--workflow",
-        default="/home/xingshen/ComfyUI/custom_nodes/ComfyUI-Licon-MSR/LTX-2.3_MSR_sample_workflow_V2.json",
-    )
-    build_api_prompt.add_argument("--case-dir", required=True)
-    build_api_prompt.add_argument("--output", required=True)
-    build_api_prompt.add_argument(
-        "--output-prefix",
-        default="LTX-2/MSR_torch_parity",
-        help="ComfyUI output filename prefix for the SaveVideo node.",
-    )
-
-    submit_api_prompt = subparsers.add_parser(
-        "submit-api-prompt",
-        help="Submit an API prompt JSON to a running ComfyUI server.",
-    )
-    submit_api_prompt.add_argument("--prompt", required=True)
-    submit_api_prompt.add_argument("--server", default="127.0.0.1:8188")
-    submit_api_prompt.add_argument("--wait", action="store_true")
-    submit_api_prompt.add_argument("--timeout-seconds", type=float, default=None)
 
     inspect_local = subparsers.add_parser(
         "inspect-local-state",
@@ -227,16 +209,55 @@ def main(argv: list[str] | None = None) -> int:
     smoke_ltxav_sampling.add_argument("--apply-lora", action="store_true")
     smoke_ltxav_sampling.add_argument("--enable-av-cross", action="store_true")
     smoke_ltxav_sampling.add_argument("--output-video", default=None)
-
+    generate_msr_case_parser = subparsers.add_parser(
+        "generate-msr-case",
+        help="Run the local torch MSR path for a sample case and write a decoded mp4.",
+    )
+    generate_msr_case_parser.add_argument(
+        "--case-dir",
+        default="sample_cases/validition_v1_01",
+    )
+    generate_msr_case_parser.add_argument(
+        "--workflow",
+        default="sample_cases/LTX-2.3_MSR_sample_workflow_V2.json",
+    )
+    generate_msr_case_parser.add_argument("--prompt-file", default=None)
+    generate_msr_case_parser.add_argument("--global-prompt", default=None)
+    generate_msr_case_parser.add_argument("--local-prompts", default=None)
+    generate_msr_case_parser.add_argument("--full-prompt", default=None)
+    generate_msr_case_parser.add_argument("--negative-prompt", default=None)
+    generate_msr_case_parser.add_argument("--lora-name", default=None)
+    generate_msr_case_parser.add_argument("--lora-strength", type=float, default=None)
+    generate_msr_case_parser.add_argument("--subject-1", default=None)
+    generate_msr_case_parser.add_argument("--subject-2", default=None)
+    generate_msr_case_parser.add_argument("--subject-3", default=None)
+    generate_msr_case_parser.add_argument("--subject-4", default=None)
+    generate_msr_case_parser.add_argument("--background", default=None)
+    generate_msr_case_parser.add_argument("--output-video", default="outputs/msr_case_01_torch.mp4")
+    generate_msr_case_parser.add_argument("--width", type=int, default=None)
+    generate_msr_case_parser.add_argument("--height", type=int, default=None)
+    generate_msr_case_parser.add_argument("--reference-width", type=int, default=None)
+    generate_msr_case_parser.add_argument("--reference-height", type=int, default=None)
+    generate_msr_case_parser.add_argument("--reference-frames", type=int, default=None)
+    generate_msr_case_parser.add_argument("--video-frames", type=int, default=None)
+    generate_msr_case_parser.add_argument("--layers", type=int, default=48)
+    generate_msr_case_parser.add_argument("--device", default="cuda")
+    generate_msr_case_parser.add_argument("--dtype", choices=("bf16", "fp16", "fp32"), default="bf16")
+    generate_msr_case_parser.add_argument("--seed", type=int, default=None)
+    generate_msr_case_parser.add_argument("--max-sigmas", type=int, default=0)
+    generate_msr_case_parser.add_argument("--sampler-impl", choices=("comfy-cfg", "legacy-packed"), default="comfy-cfg")
+    generate_msr_case_parser.add_argument("--debug-first-step", action="store_true")
+    generate_msr_case_parser.add_argument("--debug-first-step-dump", default=None)
+    generate_msr_case_parser.add_argument("--no-apply-lora", action="store_true")
+    generate_msr_case_parser.add_argument("--disable-nag", action="store_true")
+    generate_msr_case_parser.add_argument("--enable-av-cross", action="store_true")
+    generate_msr_case_parser.add_argument("--disable-av-cross", action="store_false", dest="enable_av_cross")
+    generate_msr_case_parser.set_defaults(enable_av_cross=True)
     args = parser.parse_args(argv)
     if args.command == "build-reference":
         return _build_reference(args)
     if args.command == "inspect-config":
         return _inspect_config(args)
-    if args.command == "build-api-prompt":
-        return _build_api_prompt(args)
-    if args.command == "submit-api-prompt":
-        return _submit_api_prompt(args)
     if args.command == "inspect-local-state":
         return _inspect_local_state(args)
     if args.command == "inspect-model-headers":
@@ -277,6 +298,8 @@ def main(argv: list[str] | None = None) -> int:
         return _smoke_ltxav_model_forward(args)
     if args.command == "smoke-ltxav-sampling":
         return _smoke_ltxav_sampling(args)
+    if args.command == "generate-msr-case":
+        return generate_msr_case(args)
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -314,32 +337,6 @@ def _inspect_config(args: argparse.Namespace) -> int:
     else:
         config = default_workflow_config()
     print(config)
-    return 0
-
-
-def _build_api_prompt(args: argparse.Namespace) -> int:
-    prompt = build_case_api_prompt(
-        workflow_path=args.workflow,
-        case_dir=args.case_dir,
-        output_prefix=args.output_prefix,
-    )
-    save_api_prompt(prompt, args.output)
-    print(f"saved API prompt {args.output} nodes={len(prompt)}")
-    return 0
-
-
-def _submit_api_prompt(args: argparse.Namespace) -> int:
-    prompt = load_api_prompt(args.prompt)
-    response = queue_prompt(prompt, server=args.server)
-    print(response)
-    prompt_id = response.get("prompt_id")
-    if args.wait and prompt_id:
-        history = wait_for_history(
-            prompt_id,
-            server=args.server,
-            timeout_seconds=args.timeout_seconds,
-        )
-        print(history)
     return 0
 
 
@@ -571,7 +568,7 @@ def _smoke_gemma_text_forward(args: argparse.Namespace) -> int:
     if not token_ids:
         raise ValueError("prompt produced no Gemma token ids")
     device = torch.device(args.device)
-    dtype = _torch_dtype_from_cli(args.dtype)
+    dtype = torch_dtype_from_cli(args.dtype)
     model = build_empty_gemma3_text_model(device=device, dtype=dtype, num_layers=args.layers)
     report = load_gemma_text_model_weights_streaming(
         model,
@@ -621,7 +618,7 @@ def _smoke_text_conditioning(args: argparse.Namespace) -> int:
         token_ids = [tokenizer.pad_token_id] * pad_count + token_ids
         token_mask = [0] * pad_count + token_mask
     device = torch.device(args.device)
-    dtype = _torch_dtype_from_cli(args.dtype)
+    dtype = torch_dtype_from_cli(args.dtype)
     model = build_empty_gemma3_text_model(device=device, dtype=dtype, num_layers=args.layers)
     report = load_gemma_text_model_weights_streaming(
         model,
@@ -638,7 +635,12 @@ def _smoke_text_conditioning(args: argparse.Namespace) -> int:
         )
     all_layer_hidden = torch.stack(gemma_output.hidden_states, dim=1)
     projection = build_text_projection_from_checkpoint(state.model_paths.checkpoint, device=device)
-    conditioning = projection(all_layer_hidden).to(dtype=torch.float32)
+    encoded = encode_ltx_text_conditioning(
+        all_layer_hidden.to(dtype=projection.config.dtype),
+        attention_mask=attention_mask,
+        projection=projection,
+    )
+    conditioning = encoded.conditioning.to(dtype=torch.float32)
     video_connector = build_embeddings_connector_from_checkpoint(
         state.model_paths.checkpoint,
         "video",
@@ -653,7 +655,7 @@ def _smoke_text_conditioning(args: argparse.Namespace) -> int:
     )
     context_output = connect_ltxav_text_embeddings(
         conditioning.to(device=device, dtype=dtype),
-        attention_mask=attention_mask.to(device=device),
+        attention_mask=encoded.attention_mask.to(device=device),
         video_connector=video_connector,
         audio_connector=audio_connector,
     )
@@ -666,7 +668,10 @@ def _smoke_text_conditioning(args: argparse.Namespace) -> int:
     print(f"text_conditioning_smoke_hidden_shape={tuple(all_layer_hidden.shape)}")
     print(f"text_conditioning_smoke_conditioning_shape={tuple(conditioning.shape)}")
     print(f"text_conditioning_smoke_context_shape={tuple(context_output.context.shape)}")
-    print(f"text_conditioning_smoke_attention_mask_shape={tuple(context_output.attention_mask.shape)}")
+    print(
+        "text_conditioning_smoke_attention_mask_shape="
+        f"{tuple(context_output.attention_mask.shape) if context_output.attention_mask is not None else None}"
+    )
     print(f"text_conditioning_smoke_context_finite={bool(torch.isfinite(context_output.context).all().item())}")
     return 0
 
@@ -836,23 +841,11 @@ def _inspect_ltxav_pipeline() -> int:
     return 0
 
 
-def _torch_dtype_from_cli(value: str):
-    import torch
-
-    if value == "bf16":
-        return torch.bfloat16
-    if value == "fp16":
-        return torch.float16
-    if value == "fp32":
-        return torch.float32
-    raise ValueError(f"unsupported dtype: {value}")
-
-
 def _smoke_ltxav_model_forward(args: argparse.Namespace) -> int:
     import torch
 
     state = build_low_level_state(default_workflow_config(), device="cpu")
-    dtype = _torch_dtype_from_cli(args.dtype)
+    dtype = torch_dtype_from_cli(args.dtype)
     device = torch.device(args.device)
     model = create_ltxav_model_from_checkpoint(
         state.model_paths.checkpoint,
@@ -912,7 +905,7 @@ def _smoke_ltxav_sampling(args: argparse.Namespace) -> int:
     import torch
 
     state = build_low_level_state(default_workflow_config(), device="cpu")
-    dtype = _torch_dtype_from_cli(args.dtype)
+    dtype = torch_dtype_from_cli(args.dtype)
     device = torch.device(args.device)
     model = create_ltxav_model_from_checkpoint(
         state.model_paths.checkpoint,

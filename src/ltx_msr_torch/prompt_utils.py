@@ -19,9 +19,8 @@ def parse_reference_prompt(text: str) -> tuple[str, str]:
             in_local = True
             local_lines.append(line)
 
-    return "\n".join(reference_lines), "\n".join(local_lines)
+    return "\n".join(reference_lines), " | ".join(local_lines)
 
 
 def parse_reference_prompt_file(path: str | Path) -> tuple[str, str]:
     return parse_reference_prompt(Path(path).read_text())
-

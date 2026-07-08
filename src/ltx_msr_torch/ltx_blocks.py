@@ -5,7 +5,36 @@ from dataclasses import dataclass
 import torch
 
 from .ltx_attention import CrossAttention, FeedForward, rms_norm
+from .nag import LTX2NAGConfig
+from .prompt_relay import PromptRelayPlan, build_promptrelay_mask
 from .ltx_timestep import ADALN_BASE_PARAMS_COUNT, ADALN_CROSS_ATTN_PARAMS_COUNT, CompressedTimestep
+
+
+def _combine_attention_masks(
+    attention_mask: torch.Tensor | None,
+    promptrelay_plan: PromptRelayPlan | None,
+    *,
+    query_tokens: int,
+    key_tokens: int,
+    dtype: torch.dtype,
+    device: torch.device,
+    transformer_options: dict[str, object] | None = None,
+) -> torch.Tensor | None:
+    promptrelay_mask = None
+    if promptrelay_plan is not None:
+        promptrelay_mask = build_promptrelay_mask(
+            promptrelay_plan,
+            query_tokens=query_tokens,
+            key_tokens=key_tokens,
+            dtype=dtype,
+            device=device,
+            transformer_options=transformer_options,
+        )
+    if promptrelay_mask is None:
+        return attention_mask
+    if attention_mask is None:
+        return promptrelay_mask
+    return attention_mask.to(device=device, dtype=dtype) + promptrelay_mask
 
 
 def apply_cross_attention_adaln(
@@ -265,23 +294,49 @@ class BasicAVTransformerBlock(torch.nn.Module):
         timestep: torch.Tensor,
         prompt_timestep: torch.Tensor | None,
         attention_mask: torch.Tensor | None,
+        nag_context: torch.Tensor | None = None,
+        nag_config: LTX2NAGConfig | None = None,
+        promptrelay_plan: PromptRelayPlan | None = None,
+        transformer_options: dict[str, object] | None = None,
     ) -> torch.Tensor:
+        combined_mask = _combine_attention_masks(
+            attention_mask,
+            promptrelay_plan,
+            query_tokens=x.shape[1],
+            key_tokens=context.shape[1],
+            dtype=x.dtype,
+            device=x.device,
+            transformer_options=transformer_options,
+        )
         if self.cross_attention_adaln:
             if prompt_scale_shift_table is None or prompt_timestep is None:
                 raise ValueError("prompt timestep and table are required when cross_attention_adaln=True")
             shift_q, scale_q, gate = self.get_ada_values(scale_shift_table, x.shape[0], timestep, slice(6, 9))
-            return apply_cross_attention_adaln(
-                x,
-                context,
-                attn,
-                shift_q,
-                scale_q,
-                gate,
-                prompt_scale_shift_table,
-                prompt_timestep,
-                attention_mask,
+            batch_size = x.shape[0]
+            shift_kv, scale_kv = (
+                prompt_scale_shift_table[None, None].to(device=x.device, dtype=x.dtype)
+                + prompt_timestep.reshape(batch_size, prompt_timestep.shape[1], 2, -1)
+            ).unbind(dim=2)
+            attn_input = rms_norm(x) * (1 + scale_q) + shift_q
+            encoder_hidden_states = context * (1 + scale_kv) + shift_kv
+            if nag_context is not None and nag_config is not None and nag_config.scale != 0:
+                return attn.forward_nag(
+                    attn_input,
+                    context=encoder_hidden_states,
+                    nag_context=nag_context,
+                    nag_config=nag_config,
+                    mask=combined_mask,
+                ) * gate
+            return attn(attn_input, context=encoder_hidden_states, mask=combined_mask) * gate
+        if nag_context is not None and nag_config is not None and nag_config.scale != 0:
+            return attn.forward_nag(
+                rms_norm(x),
+                context=context,
+                nag_context=nag_context,
+                nag_config=nag_config,
+                mask=combined_mask,
             )
-        return attn(rms_norm(x), context=context, mask=attention_mask)
+        return attn(rms_norm(x), context=context, mask=combined_mask)
 
     def forward(
         self,
@@ -306,6 +361,14 @@ class BasicAVTransformerBlock(torch.nn.Module):
         audio_prompt_timestep: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         options = transformer_options or {}
+        nag_config = options.get("nag_config")
+        if nag_config is not None and not isinstance(nag_config, LTX2NAGConfig):
+            raise TypeError("transformer_options['nag_config'] must be LTX2NAGConfig")
+        nag_video_context = options.get("nag_video_context")
+        nag_audio_context = options.get("nag_audio_context")
+        promptrelay_plan = options.get("promptrelay_plan")
+        if promptrelay_plan is not None and not isinstance(promptrelay_plan, PromptRelayPlan):
+            raise TypeError("transformer_options['promptrelay_plan'] must be PromptRelayPlan")
         vx, ax = x
         run_vx = bool(options.get("run_vx", True))
         run_ax = bool(options.get("run_ax", True)) and ax.numel() > 0
@@ -330,6 +393,10 @@ class BasicAVTransformerBlock(torch.nn.Module):
                 video_timestep,
                 video_prompt_timestep,
                 attention_mask,
+                nag_context=nag_video_context if isinstance(nag_video_context, torch.Tensor) else None,
+                nag_config=nag_config,
+                promptrelay_plan=promptrelay_plan,
+                transformer_options=options,
             )
 
         if run_ax:
@@ -346,6 +413,10 @@ class BasicAVTransformerBlock(torch.nn.Module):
                 audio_timestep,
                 audio_prompt_timestep,
                 attention_mask,
+                nag_context=nag_audio_context if isinstance(nag_audio_context, torch.Tensor) else None,
+                nag_config=nag_config,
+                promptrelay_plan=promptrelay_plan,
+                transformer_options=options,
             )
 
         if run_a2v or run_v2a:

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ltx_msr_torch.comfy_api_prompt import build_case_api_prompt
+from tools.comfy_api_prompt import build_case_api_prompt
 
 
 WORKFLOW = Path(

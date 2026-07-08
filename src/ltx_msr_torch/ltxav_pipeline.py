@@ -5,7 +5,13 @@ from typing import Protocol
 
 import torch
 
-from .ltxav_denoiser import LTXAVModelProtocol, sample_ltxav_euler
+from .ltxav_denoiser import (
+    LTXAVModelProtocol,
+    sample_ltxav_euler,
+    sample_ltxav_euler_comfy,
+    sample_ltxav_euler_comfy_legacy_packed,
+    sample_ltxav_euler_comfy_packed,
+)
 from .ltx_vae import decode_ltx_audio_latents, decode_ltx_video_latents
 
 
@@ -79,6 +85,8 @@ def sample_ltxav_workflow_latents(
     orig_patchified_shape: tuple[int, ...] | list[int] | None = None,
     output_orig_shape: tuple[int, ...] | list[int] | None = None,
     denoise_mask: torch.Tensor | None = None,
+    audio_denoise_mask: torch.Tensor | None = None,
+    video_latent_image: torch.Tensor | None = None,
     guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     return sample_ltxav_euler(
@@ -97,6 +105,152 @@ def sample_ltxav_workflow_latents(
         orig_patchified_shape=orig_patchified_shape,
         output_orig_shape=output_orig_shape,
         denoise_mask=denoise_mask,
+        audio_denoise_mask=audio_denoise_mask,
+        video_latent_image=video_latent_image,
+        guide_attention_entries=guide_attention_entries,
+    )
+
+
+@torch.no_grad()
+def sample_ltxav_workflow_latents_comfy(
+    *,
+    model: LTXAVModelProtocol,
+    video_noise: torch.Tensor,
+    audio_noise: torch.Tensor,
+    video_latent_image: torch.Tensor,
+    audio_latent_image: torch.Tensor,
+    context: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    sigmas: torch.Tensor,
+    frame_rate: float,
+    transformer_options: dict[str, object] | None = None,
+    self_attention_mask: torch.Tensor | None = None,
+    ref_audio_seq_len: int = 0,
+    keyframe_idxs: torch.Tensor | None = None,
+    grid_mask: torch.Tensor | None = None,
+    orig_patchified_shape: tuple[int, ...] | list[int] | None = None,
+    output_orig_shape: tuple[int, ...] | list[int] | None = None,
+    denoise_mask: torch.Tensor | None = None,
+    audio_denoise_mask: torch.Tensor | None = None,
+    guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    return sample_ltxav_euler_comfy(
+        model=model,
+        video_noise=video_noise,
+        audio_noise=audio_noise,
+        video_latent_image=video_latent_image,
+        audio_latent_image=audio_latent_image,
+        context=context,
+        attention_mask=attention_mask,
+        frame_rate=frame_rate,
+        sigmas=sigmas,
+        transformer_options=transformer_options,
+        self_attention_mask=self_attention_mask,
+        ref_audio_seq_len=ref_audio_seq_len,
+        keyframe_idxs=keyframe_idxs,
+        grid_mask=grid_mask,
+        orig_patchified_shape=orig_patchified_shape,
+        output_orig_shape=output_orig_shape,
+        denoise_mask=denoise_mask,
+        audio_denoise_mask=audio_denoise_mask,
+        guide_attention_entries=guide_attention_entries,
+    )
+
+
+@torch.no_grad()
+def sample_ltxav_workflow_latents_comfy_packed(
+    *,
+    model: LTXAVModelProtocol,
+    video_noise: torch.Tensor,
+    audio_noise: torch.Tensor,
+    video_latent_image: torch.Tensor,
+    audio_latent_image: torch.Tensor,
+    context: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    sigmas: torch.Tensor,
+    frame_rate: float,
+    negative_context: torch.Tensor | None = None,
+    negative_attention_mask: torch.Tensor | None = None,
+    cfg: float = 1.0,
+    transformer_options: dict[str, object] | None = None,
+    self_attention_mask: torch.Tensor | None = None,
+    ref_audio_seq_len: int = 0,
+    keyframe_idxs: torch.Tensor | None = None,
+    grid_mask: torch.Tensor | None = None,
+    orig_patchified_shape: tuple[int, ...] | list[int] | None = None,
+    output_orig_shape: tuple[int, ...] | list[int] | None = None,
+    denoise_mask: torch.Tensor | None = None,
+    audio_denoise_mask: torch.Tensor | None = None,
+    guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    return sample_ltxav_euler_comfy_packed(
+        model=model,
+        video_noise=video_noise,
+        audio_noise=audio_noise,
+        video_latent_image=video_latent_image,
+        audio_latent_image=audio_latent_image,
+        context=context,
+        attention_mask=attention_mask,
+        negative_context=negative_context,
+        negative_attention_mask=negative_attention_mask,
+        frame_rate=frame_rate,
+        sigmas=sigmas,
+        cfg=cfg,
+        transformer_options=transformer_options,
+        self_attention_mask=self_attention_mask,
+        ref_audio_seq_len=ref_audio_seq_len,
+        keyframe_idxs=keyframe_idxs,
+        grid_mask=grid_mask,
+        orig_patchified_shape=orig_patchified_shape,
+        output_orig_shape=output_orig_shape,
+        denoise_mask=denoise_mask,
+        audio_denoise_mask=audio_denoise_mask,
+        guide_attention_entries=guide_attention_entries,
+    )
+
+
+@torch.no_grad()
+def sample_ltxav_workflow_latents_comfy_legacy_packed(
+    *,
+    model: LTXAVModelProtocol,
+    video_noise: torch.Tensor,
+    audio_noise: torch.Tensor,
+    video_latent_image: torch.Tensor,
+    audio_latent_image: torch.Tensor,
+    context: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    sigmas: torch.Tensor,
+    frame_rate: float,
+    transformer_options: dict[str, object] | None = None,
+    self_attention_mask: torch.Tensor | None = None,
+    ref_audio_seq_len: int = 0,
+    keyframe_idxs: torch.Tensor | None = None,
+    grid_mask: torch.Tensor | None = None,
+    orig_patchified_shape: tuple[int, ...] | list[int] | None = None,
+    output_orig_shape: tuple[int, ...] | list[int] | None = None,
+    denoise_mask: torch.Tensor | None = None,
+    audio_denoise_mask: torch.Tensor | None = None,
+    guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    return sample_ltxav_euler_comfy_legacy_packed(
+        model=model,
+        video_noise=video_noise,
+        audio_noise=audio_noise,
+        video_latent_image=video_latent_image,
+        audio_latent_image=audio_latent_image,
+        context=context,
+        attention_mask=attention_mask,
+        frame_rate=frame_rate,
+        sigmas=sigmas,
+        transformer_options=transformer_options,
+        self_attention_mask=self_attention_mask,
+        ref_audio_seq_len=ref_audio_seq_len,
+        keyframe_idxs=keyframe_idxs,
+        grid_mask=grid_mask,
+        orig_patchified_shape=orig_patchified_shape,
+        output_orig_shape=output_orig_shape,
+        denoise_mask=denoise_mask,
+        audio_denoise_mask=audio_denoise_mask,
         guide_attention_entries=guide_attention_entries,
     )
 
@@ -121,6 +275,8 @@ def run_ltxav_sample_decode(
     orig_patchified_shape: tuple[int, ...] | list[int] | None = None,
     output_orig_shape: tuple[int, ...] | list[int] | None = None,
     denoise_mask: torch.Tensor | None = None,
+    audio_denoise_mask: torch.Tensor | None = None,
+    video_latent_image: torch.Tensor | None = None,
     guide_attention_entries: tuple[dict[str, object], ...] | list[dict[str, object]] | None = None,
 ) -> LTXAVWorkflowSampleOutput:
     sampled_video, sampled_audio = sample_ltxav_workflow_latents(
@@ -139,6 +295,8 @@ def run_ltxav_sample_decode(
         orig_patchified_shape=orig_patchified_shape,
         output_orig_shape=output_orig_shape,
         denoise_mask=denoise_mask,
+        audio_denoise_mask=audio_denoise_mask,
+        video_latent_image=video_latent_image,
         guide_attention_entries=guide_attention_entries,
     )
     decoded = None

@@ -4,6 +4,7 @@ from ltx_msr_torch.iclora_guide import (
     append_iclora_keyframe,
     prepare_and_append_iclora_video_guide,
     plan_iclora_video_guide,
+    resize_video_pixels,
 )
 
 
@@ -161,3 +162,11 @@ def test_prepare_and_append_iclora_video_guide_encodes_and_appends():
     assert result.guide_latent.shape == (1, 128, 2, 2, 2)
     assert result.append.latent["samples"].shape == (1, 128, 10, 2, 2)
     assert result.append.tokens_added == 8
+
+
+def test_resize_video_pixels_center_crop_matches_comfy_common_upscale():
+    image = torch.arange(20 * 30, dtype=torch.float32).view(1, 20, 30, 1).repeat(1, 1, 1, 3)
+
+    resized = resize_video_pixels(image, width=20, height=20, crop="center")
+
+    assert torch.equal(resized, image[:, :, 5:25])

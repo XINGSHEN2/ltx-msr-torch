@@ -71,7 +71,7 @@ class Embeddings1DConnector(torch.nn.Module):
         num_layers: int = 8,
         num_learnable_registers: int = 128,
         positional_embedding_theta: float = 10000.0,
-        positional_embedding_max_pos: tuple[int, ...] = (1,),
+        positional_embedding_max_pos: tuple[int, ...] = (4096,),
         apply_gated_attention: bool = True,
         split_rope: bool = True,
         double_precision_rope: bool = True,
@@ -166,25 +166,28 @@ class Embeddings1DConnector(torch.nn.Module):
     def _replace_padding_with_registers(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        attention_mask: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         if not self.num_learnable_registers:
             return hidden_states, attention_mask
-        if hidden_states.shape[1] % self.num_learnable_registers != 0:
-            raise AssertionError(
-                f"Hidden states sequence length {hidden_states.shape[1]} must be divisible by "
-                f"num_learnable_registers {self.num_learnable_registers}."
+        duplications = math.ceil(max(1024, hidden_states.shape[1]) / self.num_learnable_registers)
+        registers = torch.tile(
+            self.learnable_registers.to(hidden_states),
+            (duplications, 1),
+        )
+        hidden_states = torch.cat(
+            (
+                hidden_states,
+                registers[hidden_states.shape[1] :].unsqueeze(0).repeat(hidden_states.shape[0], 1, 1),
+            ),
+            dim=1,
+        )
+        if attention_mask is not None:
+            attention_mask = torch.zeros(
+                [1, 1, 1, hidden_states.shape[1]],
+                dtype=attention_mask.dtype,
+                device=attention_mask.device,
             )
-        duplications = hidden_states.shape[1] // self.num_learnable_registers
-        registers = torch.tile(self.learnable_registers, (duplications, 1)).to(hidden_states.device)
-        attention_mask_binary = (attention_mask.squeeze(1).squeeze(1).unsqueeze(-1) >= -9000.0).int()
-        non_zero_hidden_states = hidden_states[:, attention_mask_binary.squeeze().bool(), :]
-        non_zero_count = non_zero_hidden_states.shape[1]
-        pad_length = hidden_states.shape[1] - non_zero_count
-        adjusted_hidden_states = torch.nn.functional.pad(non_zero_hidden_states, pad=(0, 0, 0, pad_length), value=0)
-        flipped_mask = torch.flip(attention_mask_binary, dims=[1])
-        hidden_states = flipped_mask * adjusted_hidden_states + (1 - flipped_mask) * registers
-        attention_mask = torch.full_like(attention_mask, 0.0, dtype=attention_mask.dtype, device=attention_mask.device)
         return hidden_states, attention_mask
 
     def forward(
@@ -192,7 +195,7 @@ class Embeddings1DConnector(torch.nn.Module):
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        if attention_mask is not None:
+        if self.num_learnable_registers:
             hidden_states, attention_mask = self._replace_padding_with_registers(hidden_states, attention_mask)
         indices_grid = torch.arange(hidden_states.shape[1], dtype=torch.float32, device=hidden_states.device)[None, None, :]
         freqs_cis = self.precompute_freqs_cis(indices_grid)

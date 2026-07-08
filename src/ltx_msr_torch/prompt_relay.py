@@ -4,6 +4,8 @@ import math
 from dataclasses import dataclass
 from typing import Callable, Iterable, Sequence
 
+import torch
+
 
 TokenRange = tuple[int, int]
 
@@ -206,3 +208,88 @@ def plan_prompt_relay(
         effective_lengths=effective_lengths,
         segments=segments,
     )
+
+
+def build_promptrelay_mask(
+    plan: PromptRelayPlan,
+    *,
+    query_tokens: int,
+    key_tokens: int,
+    dtype: torch.dtype,
+    device: torch.device,
+    transformer_options: dict[str, object] | None = None,
+) -> torch.Tensor | None:
+    if query_tokens == key_tokens:
+        return None
+
+    options = transformer_options or {}
+    cond_or_uncond = options.get("cond_or_uncond", [])
+    if isinstance(cond_or_uncond, (list, tuple)) and 1 in cond_or_uncond and 0 not in cond_or_uncond:
+        return None
+
+    max_token_idx = max((segment.token_range[1] for segment in plan.segments), default=0)
+    tokens_per_frame = int(plan.tokens_per_frame)
+    grid_sizes = options.get("grid_sizes")
+    if grid_sizes is not None:
+        tokens_per_frame = int(grid_sizes[1]) * int(grid_sizes[2])  # type: ignore[index]
+
+    video_query_tokens = int(plan.latent_frames) * tokens_per_frame
+    if key_tokens == video_query_tokens or key_tokens < max_token_idx:
+        return None
+
+    if query_tokens == video_query_tokens:
+        return _build_temporal_cost(
+            plan,
+            query_tokens,
+            key_tokens,
+            dtype=dtype,
+            device=device,
+            tokens_per_frame=tokens_per_frame,
+        )
+    return _build_temporal_cost_scaled(plan, query_tokens, key_tokens, dtype=dtype, device=device)
+
+
+def _build_temporal_cost(
+    plan: PromptRelayPlan,
+    query_tokens: int,
+    key_tokens: int,
+    *,
+    dtype: torch.dtype,
+    device: torch.device,
+    tokens_per_frame: int | None = None,
+) -> torch.Tensor:
+    offset = torch.zeros(query_tokens, key_tokens, device=device, dtype=dtype)
+    frame_tokens = int(plan.tokens_per_frame if tokens_per_frame is None else tokens_per_frame)
+    query_frames = torch.arange(query_tokens, device=device, dtype=torch.long) // frame_tokens
+    for segment in plan.segments:
+        start, end = segment.token_range
+        d = (query_frames.float()[:, None] - float(segment.midpoint)).abs()
+        cost = (
+            float(segment.strength)
+            * (torch.relu(d - float(segment.window)) ** 2)
+            / (2 * float(segment.sigma) ** 2)
+        )
+        offset[:, start:end] = cost.to(offset.dtype)
+    return -offset
+
+
+def _build_temporal_cost_scaled(
+    plan: PromptRelayPlan,
+    query_tokens: int,
+    key_tokens: int,
+    *,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> torch.Tensor:
+    offset = torch.zeros(query_tokens, key_tokens, device=device, dtype=dtype)
+    query_frames = torch.arange(query_tokens, device=device, dtype=torch.float32) * int(plan.latent_frames) / query_tokens
+    for segment in plan.segments:
+        start, end = segment.token_range
+        d = (query_frames[:, None] - float(segment.midpoint)).abs()
+        cost = (
+            float(segment.strength_audio)
+            * (torch.relu(d - float(segment.window_audio)) ** 2)
+            / (2 * float(segment.sigma_audio) ** 2)
+        )
+        offset[:, start:end] = cost.to(offset.dtype)
+    return -offset

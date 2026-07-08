@@ -1,4 +1,5 @@
 from ltx_msr_torch.prompt_relay import (
+    build_promptrelay_mask,
     build_relay_segments,
     convert_to_latent_lengths,
     distribute_segment_lengths,
@@ -6,6 +7,7 @@ from ltx_msr_torch.prompt_relay import (
     plan_prompt_relay,
     split_local_prompts,
 )
+import torch
 
 
 def test_split_local_prompts_matches_promptrelay_separator():
@@ -60,3 +62,44 @@ def test_plan_prompt_relay_builds_effective_segments():
     assert plan.specified_latent_lengths == (7, 6, 6)
     assert plan.effective_lengths == (7, 6, 6)
     assert tuple(segment.midpoint for segment in plan.segments) == (3, 10, 16)
+
+
+def test_build_promptrelay_mask_skips_unconditional_pass_like_comfy():
+    plan = plan_prompt_relay(
+        local_prompts="line",
+        latent_shape=(1, 128, 4, 2, 3),
+        token_ranges=[(4, 8)],
+    )
+
+    mask = build_promptrelay_mask(
+        plan,
+        query_tokens=5,
+        key_tokens=16,
+        dtype=torch.float32,
+        device=torch.device("cpu"),
+        transformer_options={"cond_or_uncond": [1]},
+    )
+
+    assert mask is None
+
+
+def test_build_promptrelay_mask_uses_grid_sizes_tokens_per_frame_like_comfy():
+    plan = plan_prompt_relay(
+        local_prompts="line",
+        latent_shape=(1, 128, 4, 2, 3),
+        token_ranges=[(4, 8)],
+    )
+
+    mask = build_promptrelay_mask(
+        plan,
+        query_tokens=16,
+        key_tokens=32,
+        dtype=torch.float32,
+        device=torch.device("cpu"),
+        transformer_options={"grid_sizes": (4, 2, 2)},
+    )
+
+    assert mask is not None
+    assert mask.shape == (16, 32)
+    assert torch.equal(mask[0], mask[3])
+    assert not torch.equal(mask[3], mask[4])

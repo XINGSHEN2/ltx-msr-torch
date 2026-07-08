@@ -21,6 +21,7 @@ def extract_workflow_config(path: str | Path) -> WorkflowConfig:
     """Extract parity-critical settings from a ComfyUI workflow JSON."""
     workflow = json.loads(Path(path).read_text())
     nodes = workflow.get("nodes", [])
+    graph = _WorkflowGraph(workflow)
 
     checkpoint_node = _single(nodes, "LowVRAMCheckpointLoader")
     text_encoder_node = _single(nodes, "LTXAVTextEncoderLoader")
@@ -51,16 +52,16 @@ def extract_workflow_config(path: str | Path) -> WorkflowConfig:
             lora_strength=float(_widget(lora_node, 1, 1.0)),
         ),
         reference=ReferenceConfig(
-            width=int(_widget(reference_node, 0, 1920)),
-            height=int(_widget(reference_node, 1, 1280)),
+            width=int(graph.input_value(reference_node, "width", 0, 1920)),
+            height=int(graph.input_value(reference_node, "height", 1, 1280)),
             frame_count=int(_widget(reference_node, 2, 41)),
         ),
         latent=LatentConfig(
-            width=int(_widget(latent_node, 0, 1280)),
-            height=int(_widget(latent_node, 1, 1920)),
-            video_frames=int(_widget(latent_node, 2, 145)),
+            width=int(graph.input_value(latent_node, "width", 0, 1280)),
+            height=int(graph.input_value(latent_node, "height", 1, 1920)),
+            video_frames=int(graph.input_value(latent_node, "length", 2, 145)),
             batch_size=int(_widget(latent_node, 3, 1)),
-            audio_frames=int(_widget(audio_node, 0, 241)),
+            audio_frames=int(graph.input_value(audio_node, "frames_number", 0, 241)),
             frame_rate=int(_widget(audio_node, 1, 24)),
         ),
         sampling=SamplingConfig(
@@ -123,3 +124,41 @@ def _parse_sigmas(value: Any) -> tuple[float, ...]:
         return tuple(float(part) for part in value)
     return ()
 
+
+class _WorkflowGraph:
+    def __init__(self, workflow: dict[str, Any]) -> None:
+        self.nodes = {str(node["id"]): node for node in workflow.get("nodes", [])}
+        self.links = {int(link[0]): link for link in workflow.get("links", [])}
+
+    def input_value(
+        self,
+        node: dict[str, Any] | None,
+        input_name: str,
+        widget_index: int,
+        default: Any,
+    ) -> Any:
+        linked = self.linked_input_value(node, input_name)
+        if linked is not None:
+            return linked
+        return _widget(node, widget_index, default)
+
+    def linked_input_value(self, node: dict[str, Any] | None, input_name: str) -> Any | None:
+        if node is None:
+            return None
+        for input_def in node.get("inputs") or []:
+            if input_def.get("name") != input_name:
+                continue
+            link_id = input_def.get("link")
+            if link_id is None:
+                return None
+            link = self.links.get(int(link_id))
+            if link is None:
+                return None
+            source = self.nodes.get(str(link[1]))
+            if source is None:
+                return None
+            source_type = source.get("type")
+            if source_type in {"INTConstant", "FloatConstant", "StringConstant"}:
+                return _widget(source, 0, None)
+            return None
+        return None
