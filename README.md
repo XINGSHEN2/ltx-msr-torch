@@ -8,6 +8,25 @@ LTXAV model wiring, IC-LoRA guide injection, sampling, VAE decode, and smoke
 video writing paths. ComfyUI remains useful as the parity reference and for
 API-prompt comparison, but the main reconstruction code runs locally in torch.
 
+## Provenance And Licensing
+
+This project was reconstructed from the behavior of a ComfyUI MSR workflow,
+including the LTX 2.3 Multiple Subject Reference graph represented in
+`sample_cases/LTX-2.3_MSR_sample_workflow_V2.json`. The goal is to provide a
+standalone torch implementation that follows the same workflow semantics,
+parameters, tensor preparation, conditioning, IC-LoRA guide handling, sampling,
+and decode path without requiring ComfyUI at runtime.
+
+The implementation is not intended to vendor ComfyUI, custom node, model, LoRA,
+or text encoder weights. Those external components remain subject to their own
+licenses and usage terms. In particular, users should review the licenses for
+the referenced ComfyUI/custom-node projects and the LTX-2.3, Gemma text encoder,
+and LTX-2.3-Licon-MSR-V1 model assets before redistribution or commercial use.
+
+The `tools/` directory contains parity/debug helpers that can compare this torch
+path against ComfyUI during development; those helpers are separate from the
+standalone torch runtime.
+
 ## Current Status
 
 - Implemented: `LiconMSR` reference-video construction.
@@ -30,18 +49,119 @@ API-prompt comparison, but the main reconstruction code runs locally in torch.
 - Implemented: IC-LoRA video guide planning, real VideoVAE guide encode,
   keyframe/guide attention metadata injection, and decoded mp4 smoke output
   with AAC audio muxing.
-- Remaining: full-size end-to-end generation still needs practical GPU runtime
-  validation.
+- Validated: the bundled `validition_v1_01` workflow case runs end to end in
+  torch, and the first denoising step matches the ComfyUI reference dump
+  bit-for-bit after aligning the ComfyUI DynamicVRAM/LowVramPatch LoRA path.
 
-The intended path is:
+The remaining development path is:
 
 1. Keep comparing parity-critical tensor shapes and metadata against ComfyUI.
-2. Run small torch smoke tests with real checkpoint sections after each module
-   replacement.
-3. Scale the same torch path to the full validation case once the runtime
-   budget and GPU memory are available.
+2. Keep the debug/parity tools available for future workflow changes.
+3. Reduce assumptions that are currently tied to a local ComfyUI checkout, such
+   as the Gemma config file location.
 
 ## Usage
+
+The command examples below use the ComfyUI virtualenv because this project was
+developed against the same torch/AV stack. If you use a separate virtualenv,
+install equivalent dependencies and replace `/home/xingshen/ComfyUI/.venv/bin/python`
+with that interpreter. From a source checkout, run commands with `PYTHONPATH=src`;
+if the package is installed with `pip install -e .`, `PYTHONPATH=src` can be
+omitted.
+
+### Model Weights
+
+By default the code resolves model files from the standard local ComfyUI model
+layout:
+
+```text
+/home/xingshen/ComfyUI/models/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors
+/home/xingshen/ComfyUI/models/text_encoders/gemma_3_12B_it.safetensors
+/home/xingshen/ComfyUI/models/loras/LTX-2.3/LTX-2.3-Licon-MSR-V1.safetensors
+```
+
+The LTX checkpoint contains the transformer, video VAE, and audio VAE sections
+used by this reconstruction, so no separate VAE checkpoint is needed for the
+bundled workflow.
+
+Download the matching files with resumable `curl` downloads:
+
+```bash
+mkdir -p /home/xingshen/ComfyUI/models/checkpoints
+mkdir -p /home/xingshen/ComfyUI/models/text_encoders
+mkdir -p /home/xingshen/ComfyUI/models/loras/LTX-2.3
+
+curl -L --fail -C - \
+  -o /home/xingshen/ComfyUI/models/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors \
+  "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-distilled-1.1.safetensors?download=true"
+
+curl -L --fail -C - \
+  -o /home/xingshen/ComfyUI/models/text_encoders/gemma_3_12B_it.safetensors \
+  "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it.safetensors?download=true"
+
+curl -L --fail -C - \
+  -o /home/xingshen/ComfyUI/models/loras/LTX-2.3/LTX-2.3-Licon-MSR-V1.safetensors \
+  "https://huggingface.co/LiconStudio/LTX-2.3-Multiple-Subject-Reference/resolve/main/LTX-2.3-Licon-MSR-V1.safetensors?download=true"
+```
+
+If the weights already exist elsewhere, symlinks are fine:
+
+```bash
+ln -sfn /path/to/ltx-2.3-22b-distilled-1.1.safetensors \
+  /home/xingshen/ComfyUI/models/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors
+ln -sfn /path/to/gemma_3_12B_it.safetensors \
+  /home/xingshen/ComfyUI/models/text_encoders/gemma_3_12B_it.safetensors
+ln -sfn /path/to/LTX-2.3-Licon-MSR-V1.safetensors \
+  /home/xingshen/ComfyUI/models/loras/LTX-2.3/LTX-2.3-Licon-MSR-V1.safetensors
+```
+
+The Gemma tokenizer/config files are currently read from the ComfyUI-LTXVideo
+custom node config directory:
+
+```text
+/home/xingshen/ComfyUI/custom_nodes/ComfyUI-LTXVideo/gemma_configs
+```
+
+That directory must contain `gemma3cfg.json`, `tokenizer.json`,
+`tokenizer.model`, and `tokenizer_config.json`.
+
+Verify that all required files resolve:
+
+```bash
+PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
+  inspect-model-headers
+
+PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
+  inspect-text-encoder
+```
+
+### Running The Workflow
+
+Run the bundled `validition_v1/01` case through the pure torch MSR path:
+
+```bash
+PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
+  generate-msr-case \
+  --workflow sample_cases/LTX-2.3_MSR_sample_workflow_V2.json \
+  --case-dir sample_cases/validition_v1_01 \
+  --output-video outputs/msr_validation_v1_01_workflow_exact_lowvram_lora.mp4 \
+  --dtype bf16 \
+  --device cuda
+```
+
+For a quick wiring check, use fewer layers and only the first sampler step:
+
+```bash
+PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
+  generate-msr-case \
+  --workflow sample_cases/LTX-2.3_MSR_sample_workflow_V2.json \
+  --case-dir sample_cases/validition_v1_01 \
+  --output-video outputs/msr_case_01_smoke.mp4 \
+  --layers 1 \
+  --max-sigmas 2 \
+  --dtype bf16 \
+  --device cuda
+```
 
 Create an MSR reference tensor from up to four subject images plus a background:
 
@@ -193,19 +313,20 @@ This smoke intentionally uses one transformer layer and a 1x1 latent grid so it
 verifies wiring, LoRA application, video/audio decode, AAC muxing, and mp4
 output without attempting the full 22B workflow resolution.
 
-Run the bundled `validition_v1/01` case through the local torch MSR path and
-write a decoded mp4:
+The same command accepts prompt/image overrides. For example, to run the bundled
+case with a custom output path:
 
 ```bash
 PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
   generate-msr-case \
-  --case-dir /home/xingshen/ComfyUI/input/ltx_msr_validition_v1/01 \
+  --workflow sample_cases/LTX-2.3_MSR_sample_workflow_V2.json \
+  --case-dir sample_cases/validition_v1_01 \
   --output-video outputs/msr_case_01_torch.mp4
 ```
 
-By default this uses a practical validation size (`256x384`, 41 frames) with
-all 48 LTXAV transformer layers, the workflow NAG settings, and the full sigma
-schedule. For a quick wiring check, add `--layers 1 --max-sigmas 2`.
+By default this reads the bundled workflow JSON and uses the workflow's width,
+height, frame count, seed, sigma schedule, PromptRelay settings, IC-LoRA guide,
+NAG settings, and LoRA strength.
 
 ## Parity Notes
 
