@@ -71,8 +71,17 @@ omitted.
 
 ### Model Weights
 
-By default the code resolves model files from the standard local ComfyUI model
-layout:
+The code requires the following externally distributed model assets. The
+server keeps the model files under `/mnt/AINAS0/user/xingshen`; ComfyUI paths
+are symlinks to that shared storage.
+
+| Required asset | Shared storage path on this server | Where to obtain it |
+| --- | --- | --- |
+| Integrated LTX-2.3 checkpoint | `/mnt/AINAS0/user/xingshen/LTX-2.3/ltx-2.3-22b-distilled-1.1.safetensors` | [Lightricks/LTX-2.3 on Hugging Face](https://huggingface.co/Lightricks/LTX-2.3/blob/main/ltx-2.3-22b-distilled-1.1.safetensors) |
+| Gemma 3 12B text encoder | `/mnt/AINAS0/user/xingshen/Comfy-Org-ltx-2/text_encoders/gemma_3_12B_it.safetensors` | [Comfy-Org/ltx-2 on Hugging Face](https://huggingface.co/Comfy-Org/ltx-2/blob/main/split_files/text_encoders/gemma_3_12B_it.safetensors) |
+| LTX-2.3 MSR LoRA | `/mnt/AINAS0/user/xingshen/LTX-2.3-Multiple-Subject-Reference/LTX-2.3-Licon-MSR-V1.safetensors` | [LiconStudio/LTX-2.3-Multiple-Subject-Reference on Hugging Face](https://huggingface.co/LiconStudio/LTX-2.3-Multiple-Subject-Reference/blob/main/LTX-2.3-Licon-MSR-V1.safetensors) |
+
+The code resolves those files through the following ComfyUI paths:
 
 ```text
 /home/xingshen/ComfyUI/models/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors
@@ -80,50 +89,26 @@ layout:
 /home/xingshen/ComfyUI/models/loras/LTX-2.3/LTX-2.3-Licon-MSR-V1.safetensors
 ```
 
-The LTX checkpoint contains the transformer, video VAE, and audio VAE sections
-used by this reconstruction, so no separate VAE checkpoint is needed for the
-bundled workflow.
-
-Download the matching files with resumable `curl` downloads:
-
-```bash
-mkdir -p /home/xingshen/ComfyUI/models/checkpoints
-mkdir -p /home/xingshen/ComfyUI/models/text_encoders
-mkdir -p /home/xingshen/ComfyUI/models/loras/LTX-2.3
-
-curl -L --fail -C - \
-  -o /home/xingshen/ComfyUI/models/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors \
-  "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-distilled-1.1.safetensors?download=true"
-
-curl -L --fail -C - \
-  -o /home/xingshen/ComfyUI/models/text_encoders/gemma_3_12B_it.safetensors \
-  "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it.safetensors?download=true"
-
-curl -L --fail -C - \
-  -o /home/xingshen/ComfyUI/models/loras/LTX-2.3/LTX-2.3-Licon-MSR-V1.safetensors \
-  "https://huggingface.co/LiconStudio/LTX-2.3-Multiple-Subject-Reference/resolve/main/LTX-2.3-Licon-MSR-V1.safetensors?download=true"
-```
-
-If the weights already exist elsewhere, symlinks are fine:
-
-```bash
-ln -sfn /path/to/ltx-2.3-22b-distilled-1.1.safetensors \
-  /home/xingshen/ComfyUI/models/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors
-ln -sfn /path/to/gemma_3_12B_it.safetensors \
-  /home/xingshen/ComfyUI/models/text_encoders/gemma_3_12B_it.safetensors
-ln -sfn /path/to/LTX-2.3-Licon-MSR-V1.safetensors \
-  /home/xingshen/ComfyUI/models/loras/LTX-2.3/LTX-2.3-Licon-MSR-V1.safetensors
-```
-
-The Gemma tokenizer/config files are currently read from the ComfyUI-LTXVideo
-custom node config directory:
+The text encoder also requires the Gemma tokenizer/config bundle from the
+[Lightricks/ComfyUI-LTXVideo repository](https://github.com/Lightricks/ComfyUI-LTXVideo/tree/master/gemma_configs).
+The files are read from:
 
 ```text
-/home/xingshen/ComfyUI/custom_nodes/ComfyUI-LTXVideo/gemma_configs
+/home/xingshen/ComfyUI/custom_nodes/ComfyUI-LTXVideo/gemma_configs/gemma3cfg.json
+/home/xingshen/ComfyUI/custom_nodes/ComfyUI-LTXVideo/gemma_configs/tokenizer.json
+/home/xingshen/ComfyUI/custom_nodes/ComfyUI-LTXVideo/gemma_configs/tokenizer.model
+/home/xingshen/ComfyUI/custom_nodes/ComfyUI-LTXVideo/gemma_configs/tokenizer_config.json
 ```
 
-That directory must contain `gemma3cfg.json`, `tokenizer.json`,
-`tokenizer.model`, and `tokenizer_config.json`.
+The integrated LTX checkpoint already contains the transformer, text
+projection, video VAE, audio VAE/vocoder, and embedding connector weights.
+Consequently, this project does **not** require separate downloads for
+`ltx-2.3-22b-dev_transformer_only_fp8_scaled.safetensors`,
+`ltx-2.3_text_projection_bf16.safetensors`, a VAE, or a vocoder. It also does
+not use `gemma_3_12B_it_fp4_mixed.safetensors` or
+`ltx-2.3-22b-dev.safetensors`. Those two names appear only in the sample
+workflow's model-manager metadata; the effective workflow selections and the
+Python defaults use the three weights listed above.
 
 Verify that all required files resolve:
 
