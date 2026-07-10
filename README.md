@@ -1,5 +1,7 @@
 # ltx-msr-torch
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Standalone PyTorch-oriented reconstruction of the ComfyUI LTX 2.3 MSR workflow.
 
 This project is being converted in stages. It now contains local PyTorch
