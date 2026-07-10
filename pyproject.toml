@@ -7,7 +7,9 @@ dependencies = [
   "numpy",
   "pillow",
   "safetensors",
+  "tokenizers",
   "torch",
+  "transformers",
 ]
 
 [project.optional-dependencies]

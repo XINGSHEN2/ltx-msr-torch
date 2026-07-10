@@ -4,14 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .lora_loader import resolve_lora_path
+from .runtime_paths import model_dirs as default_model_dirs
 from .workflow_config import WorkflowConfig
-
-
-DEFAULT_COMFYUI_MODEL_DIRS: dict[str, tuple[Path, ...]] = {
-    "checkpoints": (Path("/home/xingshen/ComfyUI/models/checkpoints"),),
-    "text_encoders": (Path("/home/xingshen/ComfyUI/models/text_encoders"),),
-    "loras": (Path("/home/xingshen/ComfyUI/models/loras"),),
-}
 
 
 @dataclass(frozen=True)
@@ -25,17 +19,18 @@ class LocalModelPaths:
 def resolve_model_path(
     kind: str,
     name: str,
-    model_dirs: dict[str, tuple[Path, ...]] = DEFAULT_COMFYUI_MODEL_DIRS,
+    model_dirs: dict[str, tuple[Path, ...]] | None = None,
 ) -> Path:
     """Resolve a ComfyUI model filename under a model category."""
+    search_roots = model_dirs if model_dirs is not None else default_model_dirs()
     if kind == "loras":
-        return resolve_lora_path(name, search_dirs=model_dirs[kind])
+        return resolve_lora_path(name, search_dirs=search_roots[kind])
 
     candidate = Path(name)
     if candidate.is_absolute() and candidate.exists():
         return candidate
 
-    search_dirs = model_dirs.get(kind)
+    search_dirs = search_roots.get(kind)
     if search_dirs is None:
         raise KeyError(f"unknown model kind: {kind}")
 
@@ -50,7 +45,11 @@ def resolve_model_path(
         if path.exists():
             return path
 
-    raise FileNotFoundError(f"{kind} model not found: {name}")
+    searched = ", ".join(str(root) for root in search_dirs)
+    raise FileNotFoundError(
+        f"{kind} model not found: {name}; searched: {searched}. "
+        "Set LTX_MSR_MODEL_ROOT to use another model directory."
+    )
 
 
 def resolve_workflow_model_paths(config: WorkflowConfig) -> LocalModelPaths:
@@ -63,4 +62,3 @@ def resolve_workflow_model_paths(config: WorkflowConfig) -> LocalModelPaths:
         lora=lora,
         audio_vae_checkpoint=checkpoint,
     )
-

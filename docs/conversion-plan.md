@@ -37,8 +37,8 @@ This is the parity baseline.
 The first compatibility step uses ComfyUI API prompt JSON:
 
 ```bash
-PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch build-api-prompt \
-  --case-dir /mnt/AINAS0/user/xingshen/LTX-2.3-Multiple-Subject-Reference/examples-hf/validition_v1/01 \
+python -m ltx_msr_torch build-api-prompt \
+  --case-dir /path/to/examples/validition_v1/01 \
   --output outputs/validition_v1_01_api_prompt.json \
   --output-prefix LTX-2/MSR_torch_parity_01
 ```
@@ -46,7 +46,7 @@ PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch build-ap
 If a ComfyUI server is already running, submit it with:
 
 ```bash
-PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch submit-api-prompt \
+python -m ltx_msr_torch submit-api-prompt \
   --prompt outputs/validition_v1_01_api_prompt.json \
   --server 127.0.0.1:8188
 ```

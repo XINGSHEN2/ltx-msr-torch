@@ -6,10 +6,7 @@ from pathlib import Path
 
 from safetensors import safe_open
 
-
-DEFAULT_COMFYUI_LORA_DIRS: tuple[Path, ...] = (
-    Path("/home/xingshen/ComfyUI/models/loras"),
-)
+from .runtime_paths import model_dirs
 
 
 @dataclass(frozen=True)
@@ -45,7 +42,7 @@ class LoRAManifest:
 
 def resolve_lora_path(
     lora_name: str,
-    search_dirs: tuple[Path, ...] = DEFAULT_COMFYUI_LORA_DIRS,
+    search_dirs: tuple[Path, ...] | None = None,
 ) -> Path:
     """Resolve a ComfyUI-style LoRA name to a filesystem path.
 
@@ -53,22 +50,27 @@ def resolve_lora_path(
     local resolver mirrors the needed behavior for the MSR workflow and also
     tolerates Windows-style separators stored in workflow JSON.
     """
+    roots = search_dirs if search_dirs is not None else model_dirs()["loras"]
     candidate = Path(lora_name)
     if candidate.is_absolute() and candidate.exists():
         return candidate
 
-    for root in search_dirs:
+    for root in roots:
         path = root / lora_name
         if path.exists():
             return path
 
     normalized = lora_name.replace("\\", "/")
-    for root in search_dirs:
+    for root in roots:
         path = root / normalized
         if path.exists():
             return path
 
-    raise FileNotFoundError(f"LoRA not found: {lora_name}")
+    searched = ", ".join(str(root) for root in roots)
+    raise FileNotFoundError(
+        f"LoRA not found: {lora_name}; searched: {searched}. "
+        "Set LTX_MSR_MODEL_ROOT to use another model directory."
+    )
 
 
 def read_safetensors_metadata(path: str | Path) -> dict[str, str] | None:
@@ -152,7 +154,7 @@ def extract_reference_downscale_factor(
 def inspect_ic_lora_model_only(
     lora_name: str,
     strength_model: float,
-    search_dirs: tuple[Path, ...] = DEFAULT_COMFYUI_LORA_DIRS,
+    search_dirs: tuple[Path, ...] | None = None,
 ) -> LocalICLoRALoadResult:
     """Local metadata-only equivalent of `LTXICLoRALoaderModelOnly`.
 

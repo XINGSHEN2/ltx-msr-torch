@@ -8,7 +8,11 @@ from ltx_msr_torch.text_encoder_sections import (
 from ltx_msr_torch.workflow_config import default_workflow_config
 
 
-def test_resolve_text_encoder_config_paths_finds_gemma_files():
+def test_resolve_text_encoder_config_paths_finds_gemma_files(tmp_path, monkeypatch):
+    for name in ("gemma3cfg.json", "tokenizer.json", "tokenizer.model", "tokenizer_config.json"):
+        (tmp_path / name).touch()
+    monkeypatch.setenv("LTX_MSR_GEMMA_CONFIG_DIR", str(tmp_path))
+
     paths = resolve_text_encoder_config_paths()
 
     assert paths.gemma_config.name == "gemma3cfg.json"

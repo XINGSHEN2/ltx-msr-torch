@@ -9,9 +9,7 @@ import torch
 from safetensors import safe_open
 
 from .checkpoint_loader import load_safetensors_subset, strip_prefix_from_state_dict
-
-
-COMFYUI_ROOT = Path("/home/xingshen/ComfyUI")
+from .runtime_paths import comfyui_root
 
 
 @dataclass(frozen=True)
@@ -27,9 +25,11 @@ class LTXAVDecoders:
 
 
 def _enable_comfy_lightricks_imports() -> None:
-    root = str(COMFYUI_ROOT)
-    if root not in sys.path:
-        sys.path.insert(0, root)
+    configured_root = comfyui_root()
+    if configured_root is not None:
+        root = str(configured_root)
+        if root not in sys.path:
+            sys.path.insert(0, root)
     try:
         import comfy.options
 

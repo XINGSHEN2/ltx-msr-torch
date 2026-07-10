@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -219,7 +220,14 @@ def _resolve_workflow_image_name(image_name: str, case_dir: Path) -> Path:
 
 
 def _comfy_input_relative(path: Path) -> str:
-    comfy_input_literal = Path("/home/xingshen/ComfyUI/input")
+    configured_input = os.environ.get("COMFYUI_INPUT_DIR")
+    configured_root = os.environ.get("COMFYUI_ROOT")
+    if configured_input:
+        comfy_input_literal = Path(configured_input).expanduser()
+    elif configured_root:
+        comfy_input_literal = Path(configured_root).expanduser() / "input"
+    else:
+        comfy_input_literal = Path("ComfyUI/input")
     absolute = path.absolute()
     try:
         return str(absolute.relative_to(comfy_input_literal))
@@ -231,11 +239,4 @@ def _comfy_input_relative(path: Path) -> str:
     try:
         return str(resolved.relative_to(comfy_input))
     except ValueError:
-        marker = Path(
-            "/mnt/AINAS0/user/xingshen/LTX-2.3-Multiple-Subject-Reference/examples-hf"
-        )
-        try:
-            rel = resolved.relative_to(marker)
-            return str(Path("ltx_msr_" + rel.parts[0]) / Path(*rel.parts[1:]))
-        except ValueError:
-            return str(resolved)
+        return str(resolved)

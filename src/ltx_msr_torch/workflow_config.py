@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 class ModelConfig:
     checkpoint: str = "ltx-2.3-22b-distilled-1.1.safetensors"
     text_encoder: str = "gemma_3_12B_it.safetensors"
-    lora: str = "LTX-2.3\\LTX-2.3-Licon-MSR-V1.safetensors"
+    lora: str = "LTX-2.3/LTX-2.3-Licon-MSR-V1.safetensors"
     lora_strength: float = 1.0
 
 

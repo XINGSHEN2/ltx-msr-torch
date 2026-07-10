@@ -7,8 +7,7 @@ import re
 import torch
 from safetensors import safe_open
 
-
-DEFAULT_GEMMA_CONFIG_DIR = Path("/home/xingshen/ComfyUI/custom_nodes/ComfyUI-LTXVideo/gemma_configs")
+from .runtime_paths import gemma_config_dir
 
 
 @dataclass(frozen=True)
@@ -35,9 +34,9 @@ class TextEncoderSectionManifest:
 
 
 def resolve_text_encoder_config_paths(
-    config_dir: str | Path = DEFAULT_GEMMA_CONFIG_DIR,
+    config_dir: str | Path | None = None,
 ) -> TextEncoderConfigPaths:
-    root = Path(config_dir)
+    root = Path(config_dir) if config_dir is not None else gemma_config_dir()
     paths = TextEncoderConfigPaths(
         config_dir=root,
         gemma_config=root / "gemma3cfg.json",
@@ -47,14 +46,17 @@ def resolve_text_encoder_config_paths(
     )
     missing = [path for path in (paths.gemma_config, paths.tokenizer_json, paths.tokenizer_model, paths.tokenizer_config) if not path.exists()]
     if missing:
-        raise FileNotFoundError(f"missing Gemma config files: {missing}")
+        raise FileNotFoundError(
+            f"missing Gemma config files: {missing}. "
+            "Set LTX_MSR_GEMMA_CONFIG_DIR to use another config directory."
+        )
     return paths
 
 
 def inspect_text_encoder_section(
     text_encoder_path: str | Path,
     *,
-    config_dir: str | Path = DEFAULT_GEMMA_CONFIG_DIR,
+    config_dir: str | Path | None = None,
     first_key_count: int = 8,
 ) -> TextEncoderSectionManifest:
     resolved = Path(text_encoder_path)

@@ -57,47 +57,83 @@ The remaining development path is:
 
 1. Keep comparing parity-critical tensor shapes and metadata against ComfyUI.
 2. Keep the debug/parity tools available for future workflow changes.
-3. Reduce assumptions that are currently tied to a local ComfyUI checkout, such
-   as the Gemma config file location.
+3. Continue reducing the remaining ComfyUI source dependency in the VAE path.
 
 ## Usage
 
-The command examples below use the ComfyUI virtualenv because this project was
-developed against the same torch/AV stack. If you use a separate virtualenv,
-install equivalent dependencies and replace `/home/xingshen/ComfyUI/.venv/bin/python`
-with that interpreter. From a source checkout, run commands with `PYTHONPATH=src`;
-if the package is installed with `pip install -e .`, `PYTHONPATH=src` can be
-omitted.
+### Quick Start
+
+The following steps deploy a fresh checkout on Linux with Python 3.10 or newer.
+An NVIDIA GPU with sufficient VRAM is required for the full 22B workflow, and
+`ffmpeg` must be available on `PATH` to write video with audio.
+
+```bash
+git clone https://github.com/XINGSHEN2/ltx-msr-torch.git
+cd ltx-msr-torch
+
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+The decoder currently imports LTX VAE classes from ComfyUI. Clone ComfyUI next
+to the project (the directory may be elsewhere) and install its requirements:
+
+```bash
+mkdir -p vendor
+git clone https://github.com/comfyanonymous/ComfyUI.git vendor/ComfyUI
+python -m pip install -r vendor/ComfyUI/requirements.txt
+export COMFYUI_ROOT="$PWD/vendor/ComfyUI"
+```
 
 ### Model Weights
 
-The code requires the following externally distributed model assets. The
-server keeps the model files under `/mnt/AINAS0/user/xingshen`; ComfyUI paths
-are symlinks to that shared storage.
+The default model root is `models/` in this repository. Download these three
+externally distributed weights:
 
-| Required asset | Shared storage path on this server | Where to obtain it |
+| Required asset | Destination | Official source |
 | --- | --- | --- |
-| Integrated LTX-2.3 checkpoint | `/mnt/AINAS0/user/xingshen/LTX-2.3/ltx-2.3-22b-distilled-1.1.safetensors` | [Lightricks/LTX-2.3 on Hugging Face](https://huggingface.co/Lightricks/LTX-2.3/blob/main/ltx-2.3-22b-distilled-1.1.safetensors) |
-| Gemma 3 12B text encoder | `/mnt/AINAS0/user/xingshen/Comfy-Org-ltx-2/text_encoders/gemma_3_12B_it.safetensors` | [Comfy-Org/ltx-2 on Hugging Face](https://huggingface.co/Comfy-Org/ltx-2/blob/main/split_files/text_encoders/gemma_3_12B_it.safetensors) |
-| LTX-2.3 MSR LoRA | `/mnt/AINAS0/user/xingshen/LTX-2.3-Multiple-Subject-Reference/LTX-2.3-Licon-MSR-V1.safetensors` | [LiconStudio/LTX-2.3-Multiple-Subject-Reference on Hugging Face](https://huggingface.co/LiconStudio/LTX-2.3-Multiple-Subject-Reference/blob/main/LTX-2.3-Licon-MSR-V1.safetensors) |
+| Integrated LTX-2.3 checkpoint | `models/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors` | [Lightricks/LTX-2.3](https://huggingface.co/Lightricks/LTX-2.3/blob/main/ltx-2.3-22b-distilled-1.1.safetensors) |
+| Gemma 3 12B text encoder | `models/text_encoders/gemma_3_12B_it.safetensors` | [Comfy-Org/ltx-2](https://huggingface.co/Comfy-Org/ltx-2/blob/main/split_files/text_encoders/gemma_3_12B_it.safetensors) |
+| LTX-2.3 MSR LoRA | `models/loras/LTX-2.3/LTX-2.3-Licon-MSR-V1.safetensors` | [LiconStudio/LTX-2.3-Multiple-Subject-Reference](https://huggingface.co/LiconStudio/LTX-2.3-Multiple-Subject-Reference/blob/main/LTX-2.3-Licon-MSR-V1.safetensors) |
 
-The code resolves those files through the following ComfyUI paths:
+These commands use resumable downloads. Set `HF_ENDPOINT=https://hf-mirror.com`
+before running them when the standard Hugging Face endpoint is unavailable.
 
-```text
-/home/xingshen/ComfyUI/models/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors
-/home/xingshen/ComfyUI/models/text_encoders/gemma_3_12B_it.safetensors
-/home/xingshen/ComfyUI/models/loras/LTX-2.3/LTX-2.3-Licon-MSR-V1.safetensors
+```bash
+HF_ENDPOINT="${HF_ENDPOINT:-https://huggingface.co}"
+mkdir -p models/checkpoints models/text_encoders models/loras/LTX-2.3
+
+curl -L --fail -C - \
+  -o models/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors \
+  "$HF_ENDPOINT/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-distilled-1.1.safetensors?download=true"
+
+curl -L --fail -C - \
+  -o models/text_encoders/gemma_3_12B_it.safetensors \
+  "$HF_ENDPOINT/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it.safetensors?download=true"
+
+curl -L --fail -C - \
+  -o models/loras/LTX-2.3/LTX-2.3-Licon-MSR-V1.safetensors \
+  "$HF_ENDPOINT/LiconStudio/LTX-2.3-Multiple-Subject-Reference/resolve/main/LTX-2.3-Licon-MSR-V1.safetensors?download=true"
 ```
 
-The text encoder also requires the Gemma tokenizer/config bundle from the
-[Lightricks/ComfyUI-LTXVideo repository](https://github.com/Lightricks/ComfyUI-LTXVideo/tree/master/gemma_configs).
-The files are read from:
+The text encoder also needs `gemma3cfg.json`, `tokenizer.json`,
+`tokenizer.model`, and `tokenizer_config.json`. They are distributed in the
+[ComfyUI-LTXVideo `gemma_configs` directory](https://github.com/Lightricks/ComfyUI-LTXVideo/tree/master/gemma_configs):
 
-```text
-/home/xingshen/ComfyUI/custom_nodes/ComfyUI-LTXVideo/gemma_configs/gemma3cfg.json
-/home/xingshen/ComfyUI/custom_nodes/ComfyUI-LTXVideo/gemma_configs/tokenizer.json
-/home/xingshen/ComfyUI/custom_nodes/ComfyUI-LTXVideo/gemma_configs/tokenizer.model
-/home/xingshen/ComfyUI/custom_nodes/ComfyUI-LTXVideo/gemma_configs/tokenizer_config.json
+```bash
+git clone --depth 1 https://github.com/Lightricks/ComfyUI-LTXVideo.git \
+  vendor/ComfyUI-LTXVideo
+ln -sfn "$PWD/vendor/ComfyUI-LTXVideo/gemma_configs" models/gemma_configs
+```
+
+To reuse an existing model library instead, do not create these paths. Point
+the application at directories with the same category layout:
+
+```bash
+export LTX_MSR_MODEL_ROOT=/path/to/models
+export LTX_MSR_GEMMA_CONFIG_DIR=/path/to/gemma_configs
 ```
 
 The integrated LTX checkpoint already contains the transformer, text
@@ -113,11 +149,9 @@ Python defaults use the three weights listed above.
 Verify that all required files resolve:
 
 ```bash
-PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
-  inspect-model-headers
-
-PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
-  inspect-text-encoder
+python -m ltx_msr_torch inspect-runtime
+python -m ltx_msr_torch inspect-model-headers
+python -m ltx_msr_torch inspect-text-encoder
 ```
 
 ### Running The Workflow
@@ -125,7 +159,7 @@ PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
 Run the bundled `validition_v1/01` case through the pure torch MSR path:
 
 ```bash
-PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
+python -m ltx_msr_torch \
   generate-msr-case \
   --workflow sample_cases/LTX-2.3_MSR_sample_workflow_V2.json \
   --case-dir sample_cases/validition_v1_01 \
@@ -137,7 +171,7 @@ PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
 For a quick wiring check, use fewer layers and only the first sampler step:
 
 ```bash
-PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
+python -m ltx_msr_torch \
   generate-msr-case \
   --workflow sample_cases/LTX-2.3_MSR_sample_workflow_V2.json \
   --case-dir sample_cases/validition_v1_01 \
@@ -186,10 +220,10 @@ To submit that project-local sample to ComfyUI, expose the project under the
 ComfyUI input folder first:
 
 ```bash
-ln -sfn /home/xingshen/yiwu/ltx-msr-torch /home/xingshen/ComfyUI/input/ltx-msr-torch
+ln -sfn "$PWD" "$COMFYUI_ROOT/input/ltx-msr-torch"
 
 python -m ltx_msr_torch build-api-prompt \
-  --case-dir /home/xingshen/ComfyUI/input/ltx-msr-torch/sample_cases/validition_v1_01 \
+  --case-dir "$COMFYUI_ROOT/input/ltx-msr-torch/sample_cases/validition_v1_01" \
   --output outputs/project_sample_validition_v1_01_api_prompt.json \
   --output-prefix LTX-2/MSR_project_sample_01
 
@@ -270,7 +304,7 @@ Build the bundled validation case inputs locally and encode the IC-LoRA guide
 with the real VideoVAE:
 
 ```bash
-PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
+python -m ltx_msr_torch \
   smoke-case-inputs \
   --case-dir sample_cases/validition_v1_01 \
   --width 64 \
@@ -284,7 +318,7 @@ Run a minimal real-weight torch sampling smoke and write the decoded video with
 audio:
 
 ```bash
-PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
+python -m ltx_msr_torch \
   smoke-ltxav-sampling \
   --layers 1 \
   --device cpu \
@@ -302,7 +336,7 @@ The same command accepts prompt/image overrides. For example, to run the bundled
 case with a custom output path:
 
 ```bash
-PYTHONPATH=src /home/xingshen/ComfyUI/.venv/bin/python -m ltx_msr_torch \
+python -m ltx_msr_torch \
   generate-msr-case \
   --workflow sample_cases/LTX-2.3_MSR_sample_workflow_V2.json \
   --case-dir sample_cases/validition_v1_01 \
@@ -319,7 +353,7 @@ The source ComfyUI workflow uses:
 
 - checkpoint: `ltx-2.3-22b-distilled-1.1.safetensors`
 - text encoder: `gemma_3_12B_it.safetensors`
-- LoRA: `LTX-2.3\LTX-2.3-Licon-MSR-V1.safetensors`
+- LoRA: `LTX-2.3/LTX-2.3-Licon-MSR-V1.safetensors`
 - sampler: `euler`
 - CFG: `1`
 - NAG: scale `11`, alpha `0.25`, tau `2.5`, inplace `true`
