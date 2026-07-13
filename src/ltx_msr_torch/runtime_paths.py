@@ -31,8 +31,3 @@ def gemma_config_dir() -> Path:
         "LTX_MSR_GEMMA_CONFIG_DIR",
         model_root() / "gemma_configs",
     )
-
-
-def comfyui_root() -> Path | None:
-    value = os.environ.get("COMFYUI_ROOT")
-    return Path(value).expanduser() if value else None

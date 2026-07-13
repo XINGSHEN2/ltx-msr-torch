@@ -6,9 +6,10 @@ Standalone PyTorch-oriented reconstruction of the ComfyUI LTX 2.3 MSR workflow.
 
 This project is being converted in stages. It now contains local PyTorch
 replacements for the workflow tensor preparation, text conditioning,
-LTXAV model wiring, IC-LoRA guide injection, sampling, VAE decode, and smoke
-video writing paths. ComfyUI remains useful as the parity reference and for
-API-prompt comparison, but the main reconstruction code runs locally in torch.
+LTXAV model wiring, IC-LoRA guide injection, sampling, standalone video/audio
+VAE, vocoder, and smoke video writing paths. ComfyUI remains useful as an
+optional parity reference and for API-prompt comparison, but it is not required
+by the generation runtime.
 
 ## Provenance And Licensing
 
@@ -19,11 +20,12 @@ standalone torch implementation that follows the same workflow semantics,
 parameters, tensor preparation, conditioning, IC-LoRA guide handling, sampling,
 and decode path without requiring ComfyUI at runtime.
 
-The implementation is not intended to vendor ComfyUI, custom node, model, LoRA,
-or text encoder weights. Those external components remain subject to their own
-licenses and usage terms. In particular, users should review the licenses for
-the referenced ComfyUI/custom-node projects and the LTX-2.3, Gemma text encoder,
-and LTX-2.3-Licon-MSR-V1 model assets before redistribution or commercial use.
+The standalone VAE and vocoder modules include code adapted from ComfyUI commit
+`dd17debce517f8818ae9910b437cb1ebaa673176` under GPL-3.0. Source paths and
+modification notices are retained in each derived file; see `LICENSE` and
+`THIRD_PARTY_NOTICES.md`. The project does not include model, LoRA, or text
+encoder weights. Those assets remain subject to their own licenses and usage
+terms.
 
 The `tools/` directory contains parity/debug helpers that can compare this torch
 path against ComfyUI during development; those helpers are separate from the
@@ -51,6 +53,8 @@ standalone torch runtime.
 - Implemented: IC-LoRA video guide planning, real VideoVAE guide encode,
   keyframe/guide attention metadata injection, and decoded mp4 smoke output
   with AAC audio muxing.
+- Implemented: standalone video VAE, audio VAE, audio patchifier, and vocoder;
+  generation no longer imports any ComfyUI runtime module.
 - Validated: the bundled `validition_v1_01` workflow case runs end to end in
   torch, and the first denoising step matches the ComfyUI reference dump
   bit-for-bit after aligning the ComfyUI DynamicVRAM/LowVramPatch LoRA path.
@@ -59,7 +63,7 @@ The remaining development path is:
 
 1. Keep comparing parity-critical tensor shapes and metadata against ComfyUI.
 2. Keep the debug/parity tools available for future workflow changes.
-3. Continue reducing the remaining ComfyUI source dependency in the VAE path.
+3. Keep validating standalone VAE and vocoder parity as upstream code evolves.
 
 ## Usage
 
@@ -79,20 +83,25 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-The decoder currently imports LTX VAE classes from ComfyUI. Clone ComfyUI next
-to the project (the directory may be elsewhere) and install its requirements:
-
-```bash
-mkdir -p vendor
-git clone https://github.com/comfyanonymous/ComfyUI.git vendor/ComfyUI
-python -m pip install -r vendor/ComfyUI/requirements.txt
-export COMFYUI_ROOT="$PWD/vendor/ComfyUI"
-```
+No ComfyUI checkout, custom nodes, or ComfyUI server is required for generation.
+ComfyUI is needed only when running the optional parity/debug helpers that
+explicitly submit a prompt to a ComfyUI server.
 
 ### Model Weights
 
 The default model root is `models/` in this repository. Download these three
 externally distributed weights:
+
+For a fresh deployment, the bundled resumable downloader installs all three
+weights and the required Gemma tokenizer/configuration files:
+
+```bash
+bash scripts/download_models.sh
+```
+
+Set `LTX_MSR_MODEL_ROOT=/path/to/models` before running the script to store the
+files on a separate model disk. `HF_ENDPOINT=https://hf-mirror.com` is also
+supported.
 
 | Required asset | Destination | Official source |
 | --- | --- | --- |
@@ -120,15 +129,9 @@ curl -L --fail -C - \
   "$HF_ENDPOINT/LiconStudio/LTX-2.3-Multiple-Subject-Reference/resolve/main/LTX-2.3-Licon-MSR-V1.safetensors?download=true"
 ```
 
-The text encoder also needs `gemma3cfg.json`, `tokenizer.json`,
-`tokenizer.model`, and `tokenizer_config.json`. They are distributed in the
-[ComfyUI-LTXVideo `gemma_configs` directory](https://github.com/Lightricks/ComfyUI-LTXVideo/tree/master/gemma_configs):
-
-```bash
-git clone --depth 1 https://github.com/Lightricks/ComfyUI-LTXVideo.git \
-  vendor/ComfyUI-LTXVideo
-ln -sfn "$PWD/vendor/ComfyUI-LTXVideo/gemma_configs" models/gemma_configs
-```
+The download script also installs `gemma3cfg.json`, `tokenizer.json`,
+`tokenizer.model`, and `tokenizer_config.json` from a pinned upstream
+ComfyUI-LTXVideo revision. No additional repository clone is required.
 
 To reuse an existing model library instead, do not create these paths. Point
 the application at directories with the same category layout:
@@ -151,9 +154,26 @@ Python defaults use the three weights listed above.
 Verify that all required files resolve:
 
 ```bash
-python -m ltx_msr_torch inspect-runtime
-python -m ltx_msr_torch inspect-model-headers
-python -m ltx_msr_torch inspect-text-encoder
+python scripts/verify_environment.py
+```
+
+The script checks Python and package imports, `ffmpeg`, all three model headers,
+Gemma tokenizer files, and confirms that the bundled video and audio VAEs import
+without a ComfyUI runtime. CUDA/NVIDIA is not inspected or required by default,
+so the same preflight works on CPU-only servers. For a CUDA deployment, CUDA/BF16
+can be required explicitly and a small test video can be generated:
+
+```bash
+python scripts/verify_environment.py --require-cuda --smoke --device cuda
+```
+
+When models are stored outside this checkout, either export
+`LTX_MSR_MODEL_ROOT` and `LTX_MSR_GEMMA_CONFIG_DIR`, or pass them directly:
+
+```bash
+python scripts/verify_environment.py \
+  --model-root /path/to/models \
+  --gemma-config-dir /path/to/gemma_configs
 ```
 
 ### Running The Workflow
@@ -218,8 +238,9 @@ python -m ltx_msr_torch build-api-prompt \
 The project includes this small input case under
 `sample_cases/validition_v1_01`.
 
-To submit that project-local sample to ComfyUI, expose the project under the
-ComfyUI input folder first:
+The following optional development-only flow requires a separate ComfyUI
+checkout and running ComfyUI server. To submit the project-local sample, expose
+the project under the ComfyUI input folder first:
 
 ```bash
 ln -sfn "$PWD" "$COMFYUI_ROOT/input/ltx-msr-torch"

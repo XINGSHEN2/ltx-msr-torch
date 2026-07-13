@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,7 +8,7 @@ import torch
 from safetensors import safe_open
 
 from .checkpoint_loader import load_safetensors_subset, strip_prefix_from_state_dict
-from .runtime_paths import comfyui_root
+from .vae import AudioVAE, VideoVAE
 
 
 @dataclass(frozen=True)
@@ -22,21 +21,6 @@ class LTXVAELoadReport:
 class LTXAVDecoders:
     video_vae: torch.nn.Module
     audio_vae: torch.nn.Module
-
-
-def _enable_comfy_lightricks_imports() -> None:
-    configured_root = comfyui_root()
-    if configured_root is not None:
-        root = str(configured_root)
-        if root not in sys.path:
-            sys.path.insert(0, root)
-    try:
-        import comfy.options
-
-        sys.argv = ["ltx_msr_torch_ltx_vae", "--cpu"]
-        comfy.options.args_parsing = True
-    except Exception:
-        pass
 
 
 def load_checkpoint_config(checkpoint_path: str | Path) -> dict[str, object]:
@@ -54,9 +38,6 @@ def build_ltx_video_vae_from_checkpoint(
     dtype: torch.dtype | None = None,
     device: torch.device | str | None = None,
 ) -> torch.nn.Module:
-    _enable_comfy_lightricks_imports()
-    from comfy.ldm.lightricks.vae.causal_video_autoencoder import VideoVAE
-
     config = load_checkpoint_config(checkpoint_path)["vae"]
     model = VideoVAE(config=config)
     if dtype is not None or device is not None:
@@ -70,9 +51,6 @@ def build_ltx_audio_vae_from_checkpoint(
     dtype: torch.dtype | None = None,
     device: torch.device | str | None = None,
 ) -> torch.nn.Module:
-    _enable_comfy_lightricks_imports()
-    from comfy.ldm.lightricks.vae.audio_vae import AudioVAE
-
     with safe_open(str(checkpoint_path), framework="pt", device="cpu") as handle:
         metadata = handle.metadata()
     model = AudioVAE(metadata)

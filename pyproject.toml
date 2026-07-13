@@ -4,11 +4,13 @@ version = "0.1.0"
 description = "PyTorch-oriented reconstruction of a ComfyUI LTX 2.3 MSR workflow"
 requires-python = ">=3.10"
 dependencies = [
+  "einops",
   "numpy",
   "pillow",
   "safetensors",
   "tokenizers",
   "torch",
+  "torchaudio",
   "transformers",
 ]
 

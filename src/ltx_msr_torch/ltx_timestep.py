@@ -79,16 +79,20 @@ class TimestepEmbedding(torch.nn.Module):
         sample_proj_bias: bool = True,
         dtype: torch.dtype | None = None,
         device: torch.device | str | None = None,
+        operations=None,
     ) -> None:
         super().__init__()
-        self.linear_1 = torch.nn.Linear(in_channels, time_embed_dim, bias=sample_proj_bias, dtype=dtype, device=device)
+        operations = operations or torch.nn
+        self.linear_1 = operations.Linear(
+            in_channels, time_embed_dim, bias=sample_proj_bias, dtype=dtype, device=device
+        )
         self.cond_proj = (
-            torch.nn.Linear(cond_proj_dim, in_channels, bias=False, dtype=dtype, device=device)
+            operations.Linear(cond_proj_dim, in_channels, bias=False, dtype=dtype, device=device)
             if cond_proj_dim is not None
             else None
         )
         self.act = torch.nn.SiLU()
-        self.linear_2 = torch.nn.Linear(
+        self.linear_2 = operations.Linear(
             time_embed_dim,
             out_dim if out_dim is not None else time_embed_dim,
             bias=sample_proj_bias,
@@ -108,18 +112,23 @@ class PixArtAlphaCombinedTimestepSizeEmbeddings(torch.nn.Module):
     def __init__(
         self,
         embedding_dim: int,
+        size_emb_dim: int | None = None,
+        use_additional_conditions: bool = False,
         *,
         dtype: torch.dtype | None = None,
         device: torch.device | str | None = None,
+        operations=None,
     ) -> None:
         super().__init__()
-        self.outdim = embedding_dim // 3
+        del use_additional_conditions
+        self.outdim = embedding_dim // 3 if size_emb_dim is None else size_emb_dim
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.timestep_embedder = TimestepEmbedding(
             in_channels=256,
             time_embed_dim=embedding_dim,
             dtype=dtype,
             device=device,
+            operations=operations,
         )
 
     def forward(
