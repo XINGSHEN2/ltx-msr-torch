@@ -177,6 +177,22 @@ python -m ltx_msr_torch \
   --device cuda
 ```
 
+通过已启动的独立 LTX MSR 服务提交同一个 `validation_v1/01` 样例，并把成片
+下载到指定目录：
+
+```bash
+bash scripts/submit_validation_v1_service.sh \
+  --server http://127.0.0.1:9004 \
+  --output-dir /path/to/output
+```
+
+脚本读取工作流内置的 global/local prompt，保持原始 PromptRelay、尺寸、帧数、
+seed、negative prompt 和完整采样配置，并在任务完成后下载 MP4。
+
+配套 `mx-services/ltx_msr` 支持双卡常驻 Runtime：Gemma 与文本连接器放在一张
+卡，LTX 22B、LoRA 和两个 VAE 放在另一张卡。常驻 Worker 直接复用
+`PersistentMSRRuntime`，不会为每个任务重新加载权重。
+
 如需快速检查模型连接，可以减少层数，并且只运行第一个采样步骤：
 
 ```bash

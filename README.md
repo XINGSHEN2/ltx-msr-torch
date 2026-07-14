@@ -190,6 +190,24 @@ python -m ltx_msr_torch \
   --device cuda
 ```
 
+To submit the same `validation_v1/01` case to a running standalone LTX MSR
+service and download the result into a chosen directory:
+
+```bash
+bash scripts/submit_validation_v1_service.sh \
+  --server http://127.0.0.1:9004 \
+  --output-dir /path/to/output
+```
+
+The script reads the global/local prompts embedded in the workflow, preserves
+the original PromptRelay, dimensions, frame counts, seed, negative prompt, and
+full sampling settings, then downloads the MP4 after the task completes.
+
+The companion `mx-services/ltx_msr` launcher supports a split-device resident
+runtime: Gemma and the text connectors stay on one device, while LTX 22B, the
+LoRA, and both VAEs stay on another. Its long-lived worker reuses
+`PersistentMSRRuntime` instead of loading weights for every task.
+
 For a quick wiring check, use fewer layers and only the first sampler step:
 
 ```bash

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .dtypes import torch_dtype_from_cli
 from .gemma_text_model import build_empty_gemma3_text_model, load_gemma_text_model_weights_streaming
@@ -35,14 +37,202 @@ from .video_io import write_av_mp4
 from .workflow_extract import extract_workflow_config
 
 
-def generate_msr_case(args: argparse.Namespace) -> int:
+@dataclass
+class PersistentMSRRuntime:
+    """Models pinned across requests for a split-device MSR service."""
+
+    workflow_path: Path
+    config: Any
+    state: Any
+    dtype: Any
+    text_device: Any
+    model_device: Any
+    layers: int
+    tokenizer: Any
+    gemma: Any
+    gemma_report: Any
+    projection: Any
+    video_connector: Any
+    audio_connector: Any
+    decoders: Any
+    model: Any
+    model_report: Any
+    lora_name: str
+    lora_strength: float
+    lora_report: Any
+    apply_lora: bool
+
+    def validate_request(self, args: argparse.Namespace) -> None:
+        import torch
+
+        workflow_path = Path(args.workflow).resolve()
+        dtype = torch_dtype_from_cli(args.dtype)
+        model_device = torch.device(args.device)
+        lora_name, lora_strength = _requested_lora_settings(args, self.config)
+        apply_lora = not bool(getattr(args, "no_apply_lora", False))
+        mismatches: list[str] = []
+        if workflow_path != self.workflow_path:
+            mismatches.append(f"workflow={workflow_path}")
+        if dtype != self.dtype:
+            mismatches.append(f"dtype={dtype}")
+        if model_device != self.model_device:
+            mismatches.append(f"model_device={model_device}")
+        if int(args.layers) != self.layers:
+            mismatches.append(f"layers={args.layers}")
+        if lora_name != self.lora_name:
+            mismatches.append(f"lora_name={lora_name}")
+        if lora_strength != self.lora_strength:
+            mismatches.append(f"lora_strength={lora_strength}")
+        if apply_lora != self.apply_lora:
+            mismatches.append(f"apply_lora={apply_lora}")
+        if mismatches:
+            raise ValueError(
+                "request is incompatible with the resident MSR runtime: "
+                + ", ".join(mismatches)
+            )
+
+    def clear_transient_memory(self) -> None:
+        import gc
+        import torch
+
+        gc.collect()
+        for device in {self.text_device, self.model_device}:
+            if device.type != "cuda":
+                continue
+            with torch.cuda.device(device):
+                torch.cuda.empty_cache()
+
+
+def load_persistent_msr_runtime(
+    args: argparse.Namespace,
+    *,
+    text_device: str,
+) -> PersistentMSRRuntime:
+    """Load the text stack and generation stack once on separate devices."""
     import torch
 
-    workflow_path = Path(args.workflow)
+    workflow_path = Path(args.workflow).resolve()
     config = extract_workflow_config(workflow_path)
-    case_dir = Path(args.case_dir)
+    state = build_low_level_state(config, device="cpu")
     dtype = torch_dtype_from_cli(args.dtype)
-    device = torch.device(args.device)
+    model_device = torch.device(args.device)
+    resolved_text_device = torch.device(text_device)
+    if model_device == resolved_text_device:
+        raise ValueError(
+            "persistent MSR runtime requires different text and model devices; "
+            f"both resolved to {model_device}"
+        )
+
+    tokenizer = GemmaTokenizer.from_config_paths()
+    gemma = build_empty_gemma3_text_model(
+        device=resolved_text_device,
+        dtype=dtype,
+        num_layers=48,
+    )
+    gemma_report = load_gemma_text_model_weights_streaming(
+        gemma,
+        state.model_paths.text_encoder,
+        device=resolved_text_device,
+    )
+    gemma.eval()
+    projection = build_text_projection_from_checkpoint(
+        state.model_paths.checkpoint,
+        device=resolved_text_device,
+    )
+    video_connector = build_embeddings_connector_from_checkpoint(
+        state.model_paths.checkpoint,
+        "video",
+        dtype=dtype,
+        device=resolved_text_device,
+    )
+    audio_connector = build_embeddings_connector_from_checkpoint(
+        state.model_paths.checkpoint,
+        "audio",
+        dtype=dtype,
+        device=resolved_text_device,
+    )
+
+    decoders = load_ltxav_decoders_from_checkpoint(
+        state.model_paths.checkpoint,
+        dtype=dtype,
+        device=model_device,
+    )
+    decoders.video_vae.eval()
+    decoders.audio_vae.eval()
+    model = create_ltxav_model_from_checkpoint(
+        state.model_paths.checkpoint,
+        dtype=dtype,
+        device="meta",
+        num_layers=int(args.layers),
+    )
+    model_report = load_ltxav_model_weights_streaming(
+        model,
+        state.model_paths.checkpoint,
+        device=model_device,
+        assign=True,
+    )
+    lora_name, lora_strength = _requested_lora_settings(args, config)
+    apply_lora = not bool(getattr(args, "no_apply_lora", False))
+    lora_report = None
+    if apply_lora:
+        lora_path = resolve_lora_path(lora_name)
+        lora_manifest = inspect_lora_manifest(lora_path)
+        lora_report = apply_lora_to_ltxav_model(
+            model,
+            lora_path=lora_path,
+            manifest=lora_manifest,
+            strength=lora_strength,
+        )
+    model.eval()
+
+    return PersistentMSRRuntime(
+        workflow_path=workflow_path,
+        config=config,
+        state=state,
+        dtype=dtype,
+        text_device=resolved_text_device,
+        model_device=model_device,
+        layers=int(args.layers),
+        tokenizer=tokenizer,
+        gemma=gemma,
+        gemma_report=gemma_report,
+        projection=projection,
+        video_connector=video_connector,
+        audio_connector=audio_connector,
+        decoders=decoders,
+        model=model,
+        model_report=model_report,
+        lora_name=lora_name,
+        lora_strength=lora_strength,
+        lora_report=lora_report,
+        apply_lora=apply_lora,
+    )
+
+
+def generate_msr_case(
+    args: argparse.Namespace,
+    *,
+    runtime: PersistentMSRRuntime | None = None,
+) -> int:
+    import torch
+
+    workflow_path = Path(args.workflow).resolve()
+    if runtime is not None:
+        runtime.validate_request(args)
+        config = runtime.config
+        state = runtime.state
+        dtype = runtime.dtype
+        device = runtime.model_device
+        text_device = runtime.text_device
+        tokenizer = runtime.tokenizer
+    else:
+        config = extract_workflow_config(workflow_path)
+        state = build_low_level_state(config, device="cpu")
+        dtype = torch_dtype_from_cli(args.dtype)
+        device = torch.device(args.device)
+        text_device = device
+        tokenizer = GemmaTokenizer.from_config_paths()
+    case_dir = Path(args.case_dir)
     width = int(args.width) if args.width is not None else int(config.latent.width)
     height = int(args.height) if args.height is not None else int(config.latent.height)
     reference_frames = int(args.reference_frames) if args.reference_frames is not None else int(config.reference.frame_count)
@@ -56,7 +246,6 @@ def generate_msr_case(args: argparse.Namespace) -> int:
     if reference_frames <= 0 or video_frames <= 0:
         raise ValueError("reference-frames and video-frames must be positive")
 
-    state = build_low_level_state(config, device="cpu")
     sigmas = _limited_sigmas(state.sigmas, args.max_sigmas).to(device=device)
     latent_frames = ((video_frames - 1) // 8) + 1
     latent_height = height // 32
@@ -82,7 +271,6 @@ def generate_msr_case(args: argparse.Namespace) -> int:
         else workflow_reference_inputs.get("background", case_dir / "bg.png")
     )
 
-    tokenizer = GemmaTokenizer.from_config_paths()
     full_prompt = getattr(args, "full_prompt", None)
     if full_prompt is not None:
         global_prompt = str(full_prompt)
@@ -140,16 +328,26 @@ def generate_msr_case(args: argparse.Namespace) -> int:
         )
         token_plan = tokenizer.tokenize_with_weights(relay_plan.full_prompt)
     text_inputs = build_text_conditioning_inputs_from_plan(token_plan)
-    input_ids = torch.tensor(text_inputs.token_ids, device=device, dtype=torch.long)
-    text_mask = attention_mask_tensor(text_inputs, device=device)
+    input_ids = torch.tensor(text_inputs.token_ids, device=text_device, dtype=torch.long)
+    text_mask = attention_mask_tensor(text_inputs, device=text_device)
 
-    gemma = build_empty_gemma3_text_model(device=device, dtype=dtype, num_layers=48)
-    gemma_report = load_gemma_text_model_weights_streaming(
-        gemma,
-        state.model_paths.text_encoder,
-        device=device,
-    )
-    gemma.eval()
+    if runtime is not None:
+        gemma = runtime.gemma
+        gemma_report = runtime.gemma_report
+        projection = runtime.projection
+        video_connector = runtime.video_connector
+        audio_connector = runtime.audio_connector
+    else:
+        gemma = build_empty_gemma3_text_model(device=text_device, dtype=dtype, num_layers=48)
+        gemma_report = load_gemma_text_model_weights_streaming(
+            gemma,
+            state.model_paths.text_encoder,
+            device=text_device,
+        )
+        gemma.eval()
+        projection = None
+        video_connector = None
+        audio_connector = None
     with torch.inference_mode():
         gemma_output = gemma(
             input_ids=input_ids,
@@ -157,25 +355,32 @@ def generate_msr_case(args: argparse.Namespace) -> int:
             output_hidden_states=True,
         )
     all_layer_hidden = torch.stack(gemma_output.hidden_states, dim=1)
-    projection = build_text_projection_from_checkpoint(state.model_paths.checkpoint, device=device)
-    video_connector = build_embeddings_connector_from_checkpoint(
-        state.model_paths.checkpoint,
-        "video",
-        dtype=dtype,
-        device=device,
-    )
-    audio_connector = build_embeddings_connector_from_checkpoint(
-        state.model_paths.checkpoint,
-        "audio",
-        dtype=dtype,
-        device=device,
-    )
+    if runtime is None:
+        projection = build_text_projection_from_checkpoint(
+            state.model_paths.checkpoint,
+            device=text_device,
+        )
+        video_connector = build_embeddings_connector_from_checkpoint(
+            state.model_paths.checkpoint,
+            "video",
+            dtype=dtype,
+            device=text_device,
+        )
+        audio_connector = build_embeddings_connector_from_checkpoint(
+            state.model_paths.checkpoint,
+            "audio",
+            dtype=dtype,
+            device=text_device,
+        )
+    assert projection is not None
+    assert video_connector is not None
+    assert audio_connector is not None
     encoded = encode_ltx_text_conditioning(
         all_layer_hidden.to(dtype=projection.config.dtype),
         attention_mask=text_mask,
         projection=projection,
     )
-    conditioning = encoded.conditioning.to(device=device, dtype=dtype)
+    conditioning = encoded.conditioning.to(device=text_device, dtype=dtype)
     context_output = connect_ltxav_text_embeddings(
         conditioning,
         attention_mask=None,
@@ -185,8 +390,8 @@ def generate_msr_case(args: argparse.Namespace) -> int:
     negative_prompt = args.negative_prompt if args.negative_prompt is not None else config.prompt.negative_prompt
     negative_plan = tokenizer.tokenize_with_weights(negative_prompt)
     negative_inputs = build_text_conditioning_inputs_from_plan(negative_plan)
-    negative_input_ids = torch.tensor(negative_inputs.token_ids, device=device, dtype=torch.long)
-    negative_mask = attention_mask_tensor(negative_inputs, device=device)
+    negative_input_ids = torch.tensor(negative_inputs.token_ids, device=text_device, dtype=torch.long)
+    negative_mask = attention_mask_tensor(negative_inputs, device=text_device)
     with torch.inference_mode():
         negative_output = gemma(
             input_ids=negative_input_ids,
@@ -199,7 +404,7 @@ def generate_msr_case(args: argparse.Namespace) -> int:
         attention_mask=negative_mask,
         projection=projection,
     )
-    negative_conditioning = negative_encoded.conditioning.to(device=device, dtype=dtype)
+    negative_conditioning = negative_encoded.conditioning.to(device=text_device, dtype=dtype)
     negative_context_output = connect_ltxav_text_embeddings(
         negative_conditioning,
         attention_mask=None,
@@ -207,27 +412,29 @@ def generate_msr_case(args: argparse.Namespace) -> int:
         audio_connector=audio_connector,
     )
     del (
-        gemma,
         gemma_output,
         all_layer_hidden,
         negative_output,
         negative_hidden,
-        projection,
-        video_connector,
-        audio_connector,
         conditioning,
         negative_conditioning,
     )
-    if device.type == "cuda":
-        torch.cuda.empty_cache()
+    if runtime is None:
+        del gemma, projection, video_connector, audio_connector
+    if text_device.type == "cuda":
+        with torch.cuda.device(text_device):
+            torch.cuda.empty_cache()
 
-    decoders = load_ltxav_decoders_from_checkpoint(
-        state.model_paths.checkpoint,
-        dtype=dtype,
-        device=device,
-    )
-    decoders.video_vae.eval()
-    decoders.audio_vae.eval()
+    if runtime is not None:
+        decoders = runtime.decoders
+    else:
+        decoders = load_ltxav_decoders_from_checkpoint(
+            state.model_paths.checkpoint,
+            dtype=dtype,
+            device=device,
+        )
+        decoders.video_vae.eval()
+        decoders.audio_vae.eval()
 
     reference = create_msr_reference_video_from_paths(
         subjects=[subject_1, subject_2, subject_3, subject_4],
@@ -277,35 +484,35 @@ def generate_msr_case(args: argparse.Namespace) -> int:
     audio_latent_image = audio_latents
     audio_denoise_mask = torch.ones_like(audio_latent_image, dtype=torch.float32)
 
-    model = create_ltxav_model_from_checkpoint(
-        state.model_paths.checkpoint,
-        dtype=dtype,
-        device="meta",
-        num_layers=int(args.layers),
-    )
-    model_report = load_ltxav_model_weights_streaming(
-        model,
-        state.model_paths.checkpoint,
-        device=device,
-        assign=True,
-    )
-    lora_name = str(getattr(args, "lora_name", None) or config.model.lora)
-    lora_strength = float(
-        config.model.lora_strength
-        if getattr(args, "lora_strength", None) is None
-        else getattr(args, "lora_strength")
-    )
-    lora_report = None
-    if not args.no_apply_lora:
-        lora_path = resolve_lora_path(lora_name)
-        lora_manifest = inspect_lora_manifest(lora_path)
-        lora_report = apply_lora_to_ltxav_model(
-            model,
-            lora_path=lora_path,
-            manifest=lora_manifest,
-            strength=lora_strength,
+    lora_name, lora_strength = _requested_lora_settings(args, config)
+    if runtime is not None:
+        model = runtime.model
+        model_report = runtime.model_report
+        lora_report = runtime.lora_report
+    else:
+        model = create_ltxav_model_from_checkpoint(
+            state.model_paths.checkpoint,
+            dtype=dtype,
+            device="meta",
+            num_layers=int(args.layers),
         )
-    model.eval()
+        model_report = load_ltxav_model_weights_streaming(
+            model,
+            state.model_paths.checkpoint,
+            device=device,
+            assign=True,
+        )
+        lora_report = None
+        if not args.no_apply_lora:
+            lora_path = resolve_lora_path(lora_name)
+            lora_manifest = inspect_lora_manifest(lora_path)
+            lora_report = apply_lora_to_ltxav_model(
+                model,
+                lora_path=lora_path,
+                manifest=lora_manifest,
+                strength=lora_strength,
+            )
+        model.eval()
 
     keyframe_idxs = get_conditioning_value(guide.append.positive, "keyframe_idxs")
     guide_attention_entries = get_conditioning_value(guide.append.positive, "guide_attention_entries", [])
@@ -444,6 +651,17 @@ def generate_msr_case(args: argparse.Namespace) -> int:
     print(f"msr_case_decoded_video_shape={tuple(decoded.video.shape)}")
     print(f"msr_case_decoded_audio_shape={tuple(decoded.audio.shape) if decoded.audio is not None else None}")
     return 0
+
+
+def _requested_lora_settings(args: argparse.Namespace, config: Any) -> tuple[str, float]:
+    lora_name = str(getattr(args, "lora_name", None) or config.model.lora)
+    requested_strength = getattr(args, "lora_strength", None)
+    lora_strength = float(
+        config.model.lora_strength
+        if requested_strength is None
+        else requested_strength
+    )
+    return lora_name, lora_strength
 
 
 def _resolve_workflow_licon_images(workflow_path: Path, case_dir: Path) -> dict[str, Path]:
