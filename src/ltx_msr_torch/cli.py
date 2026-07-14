@@ -223,23 +223,53 @@ def main(argv: list[str] | None = None) -> int:
     )
     generate_msr_case_parser.add_argument("--prompt-file", default=None)
     generate_msr_case_parser.add_argument("--global-prompt", default=None)
-    generate_msr_case_parser.add_argument("--local-prompts", default=None)
+    generate_msr_case_parser.add_argument(
+        "--local-prompt",
+        "--local-prompts",
+        dest="local_prompts",
+        default=None,
+    )
     generate_msr_case_parser.add_argument("--full-prompt", default=None)
     generate_msr_case_parser.add_argument("--negative-prompt", default=None)
     generate_msr_case_parser.add_argument("--lora-name", default=None)
     generate_msr_case_parser.add_argument("--lora-strength", type=float, default=None)
-    generate_msr_case_parser.add_argument("--subject-1", default=None)
-    generate_msr_case_parser.add_argument("--subject-2", default=None)
-    generate_msr_case_parser.add_argument("--subject-3", default=None)
-    generate_msr_case_parser.add_argument("--subject-4", default=None)
+    generate_msr_case_parser.add_argument("--image-1", "--subject-1", dest="subject_1", default=None)
+    generate_msr_case_parser.add_argument("--image-2", "--subject-2", dest="subject_2", default=None)
+    generate_msr_case_parser.add_argument("--image-3", "--subject-3", dest="subject_3", default=None)
+    generate_msr_case_parser.add_argument("--image-4", "--subject-4", dest="subject_4", default=None)
     generate_msr_case_parser.add_argument("--background", default=None)
-    generate_msr_case_parser.add_argument("--output-video", default="outputs/msr_case_01_torch.mp4")
+    generate_msr_case_parser.add_argument("--output-video", default=None)
+    generate_msr_case_parser.add_argument("--output-dir", default=None)
+    generate_msr_case_parser.add_argument(
+        "--resolution",
+        default=None,
+        help="Output resolution as WIDTHxHEIGHT (for example 720x1280).",
+    )
     generate_msr_case_parser.add_argument("--width", type=int, default=None)
     generate_msr_case_parser.add_argument("--height", type=int, default=None)
     generate_msr_case_parser.add_argument("--reference-width", type=int, default=None)
     generate_msr_case_parser.add_argument("--reference-height", type=int, default=None)
     generate_msr_case_parser.add_argument("--reference-frames", type=int, default=None)
     generate_msr_case_parser.add_argument("--video-frames", type=int, default=None)
+    generate_msr_case_parser.add_argument(
+        "--fps",
+        "--frame-rate",
+        dest="frame_rate",
+        type=int,
+        default=None,
+    )
+    generate_msr_case_parser.add_argument(
+        "--ic-lora-guide-strength",
+        type=float,
+        default=None,
+    )
+    generate_msr_case_parser.add_argument(
+        "--cfg-guide",
+        "--cfg",
+        dest="cfg_guide",
+        type=float,
+        default=None,
+    )
     generate_msr_case_parser.add_argument("--layers", type=int, default=48)
     generate_msr_case_parser.add_argument("--device", default="cuda")
     generate_msr_case_parser.add_argument("--dtype", choices=("bf16", "fp16", "fp32"), default="bf16")

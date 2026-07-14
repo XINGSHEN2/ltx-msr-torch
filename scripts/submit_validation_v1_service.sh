@@ -193,6 +193,7 @@ CURL_ARGS=(
     --form-string "global_prompt=${GLOBAL_PROMPT}"
     --form-string "local_prompts=${LOCAL_PROMPTS}"
     --form-string "negative_prompt=${NEGATIVE_PROMPT}"
+    --form-string "output_dir=${OUTPUT_DIR}"
     -F "background=@${BACKGROUND}"
 )
 for subject_number in 1 2 3 4; do

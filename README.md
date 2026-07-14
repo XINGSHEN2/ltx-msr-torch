@@ -185,41 +185,59 @@ python -m ltx_msr_torch \
   generate-msr-case \
   --workflow sample_cases/LTX-2.3_MSR_sample_workflow_V2.json \
   --case-dir sample_cases/validition_v1_01 \
-  --output-video outputs/msr_validation_v1_01_workflow_exact_lowvram_lora.mp4 \
+  --resolution '720*1280' \
+  --fps 24 \
+  --video-frames 145 \
+  --global-prompt 'Two characters meet in a cinematic city street.' \
+  --local-prompt 'the first character walks forward | the second character turns around' \
+  --negative-prompt 'subtitles, watermark, blurry' \
+  --image-1 sample_cases/validition_v1_01/2.jpg \
+  --image-2 sample_cases/validition_v1_01/1.jpg \
+  --background sample_cases/validition_v1_01/bg.png \
+  --ic-lora-guide-strength 1 \
+  --cfg-guide 1 \
+  --output-dir outputs/msr_validation_v1_01 \
   --dtype bf16 \
   --device cuda
 ```
 
-To submit the same `validation_v1/01` case to a running standalone LTX MSR
-service and download the result into a chosen directory:
+`--resolution` is WIDTH x HEIGHT. `--fps` defaults to the workflow's 24 FPS,
+while `--video-frames` is the total output frame count. Images 1 through 4 are
+optional, and an explicit custom image set requires `--background`. IC-LoRA
+guide strength and CFG guide both default to 1. The older `--subject-*`,
+`--local-prompts`, and `--frame-rate` spellings remain aliases.
+
+Submit directly to a running `mx-services/ltx_msr` endpoint with `curl`; no
+helper script is needed:
 
 ```bash
-bash scripts/submit_validation_v1_service.sh \
-  --server http://127.0.0.1:9004 \
-  --background sample_cases/validition_v1_01/bg.png \
-  --subject-1 sample_cases/validition_v1_01/2.jpg \
-  --subject-2 sample_cases/validition_v1_01/1.jpg \
-  --output-dir /path/to/output
+curl -X POST http://127.0.0.1:9004/submit \
+  -F 'pipeline_name=ltx_msr' \
+  -F 'resolution=720*1280' \
+  -F 'fps=24' \
+  -F 'video_frames=145' \
+  -F 'global_prompt=Two characters meet in a cinematic city street.' \
+  -F 'local_prompt=the first character walks forward | the second character turns around' \
+  -F 'negative_prompt=subtitles, watermark, blurry' \
+  -F 'image_1=@sample_cases/validition_v1_01/2.jpg' \
+  -F 'image_2=@sample_cases/validition_v1_01/1.jpg' \
+  -F 'background=@sample_cases/validition_v1_01/bg.png' \
+  -F 'ic_lora_guide_strength=1' \
+  -F 'cfg_guide=1' \
+  -F 'output_dir=/path/on/server/to/output'
 ```
 
-The script reads the global/local prompts embedded in the workflow, preserves
-the original PromptRelay, dimensions, frame counts, seed, negative prompt, and
-full sampling settings, then downloads the MP4 after the task completes.
-
-Custom UTF-8 prompt files and an output directory can be supplied directly:
+Use the returned `task_id` directly for status and download requests:
 
 ```bash
-bash scripts/submit_validation_v1_service.sh \
-  --global-prompt-file /path/to/global.txt \
-  --local-prompt-file /path/to/local.txt \
-  --negative-prompt-file /path/to/negative.txt \
-  --background /path/to/background.png \
-  --output-dir /path/to/output
+curl http://127.0.0.1:9004/status/<task_id>
+curl -o result.mp4 http://127.0.0.1:9004/download/<task_id>
 ```
 
-All three prompt file options must be provided together. `--background` is
-required. `--subject-1` through `--subject-4` are independently optional, so
-the request may include zero to four subject images.
+Service requests require `background` and `output_dir`; `image_1` through
+`image_4` are optional. Resolution defaults to `720x1280`, FPS defaults to 24,
+and both guide strengths default to 1. `output_dir` is on the service host; the
+completed status payload reports its final `saved_output_path`.
 
 The companion `mx-services/ltx_msr` launcher supports a split-device resident
 runtime: Gemma and the text connectors stay on one device, while LTX 22B, the

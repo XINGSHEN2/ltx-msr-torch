@@ -172,39 +172,58 @@ python -m ltx_msr_torch \
   generate-msr-case \
   --workflow sample_cases/LTX-2.3_MSR_sample_workflow_V2.json \
   --case-dir sample_cases/validition_v1_01 \
-  --output-video outputs/msr_validation_v1_01_workflow_exact_lowvram_lora.mp4 \
+  --resolution '720*1280' \
+  --fps 24 \
+  --video-frames 145 \
+  --global-prompt 'Two characters meet in a cinematic city street.' \
+  --local-prompt 'the first character walks forward | the second character turns around' \
+  --negative-prompt 'subtitles, watermark, blurry' \
+  --image-1 sample_cases/validition_v1_01/2.jpg \
+  --image-2 sample_cases/validition_v1_01/1.jpg \
+  --background sample_cases/validition_v1_01/bg.png \
+  --ic-lora-guide-strength 1 \
+  --cfg-guide 1 \
+  --output-dir outputs/msr_validation_v1_01 \
   --dtype bf16 \
   --device cuda
 ```
 
-通过已启动的独立 LTX MSR 服务提交同一个 `validation_v1/01` 样例，并把成片
-下载到指定目录：
+`--resolution` 按“宽 x 高”解析；`--fps` 默认使用工作流的 24 FPS，
+`--video-frames` 是成片总帧数。`--image-1` 到 `--image-4` 可全部省略，显式
+使用自定义图片时必须提供 `--background`。IC-LoRA Guide Strength 和 CFG Guide
+默认都是 `1`。`--subject-1` 到 `--subject-4`、`--local-prompts` 和
+`--frame-rate` 继续作为兼容别名。
+
+通过已启动的 `mx-services/ltx_msr` 服务，可以直接使用 `curl` 提交，无需辅助脚本：
 
 ```bash
-bash scripts/submit_validation_v1_service.sh \
-  --server http://127.0.0.1:9004 \
-  --background sample_cases/validition_v1_01/bg.png \
-  --subject-1 sample_cases/validition_v1_01/2.jpg \
-  --subject-2 sample_cases/validition_v1_01/1.jpg \
-  --output-dir /path/to/output
+curl -X POST http://127.0.0.1:9004/submit \
+  -F 'pipeline_name=ltx_msr' \
+  -F 'resolution=720*1280' \
+  -F 'fps=24' \
+  -F 'video_frames=145' \
+  -F 'global_prompt=Two characters meet in a cinematic city street.' \
+  -F 'local_prompt=the first character walks forward | the second character turns around' \
+  -F 'negative_prompt=subtitles, watermark, blurry' \
+  -F 'image_1=@sample_cases/validition_v1_01/2.jpg' \
+  -F 'image_2=@sample_cases/validition_v1_01/1.jpg' \
+  -F 'background=@sample_cases/validition_v1_01/bg.png' \
+  -F 'ic_lora_guide_strength=1' \
+  -F 'cfg_guide=1' \
+  -F 'output_dir=/path/on/server/to/output'
 ```
 
-脚本读取工作流内置的 global/local prompt，保持原始 PromptRelay、尺寸、帧数、
-seed、negative prompt 和完整采样配置，并在任务完成后下载 MP4。
-
-也可以通过三个 UTF-8 文本文件传入自定义 prompt，并指定输出目录：
+返回值中的 `task_id` 可直接用于查询和下载：
 
 ```bash
-bash scripts/submit_validation_v1_service.sh \
-  --global-prompt-file /path/to/global.txt \
-  --local-prompt-file /path/to/local.txt \
-  --negative-prompt-file /path/to/negative.txt \
-  --background /path/to/background.png \
-  --output-dir /path/to/output
+curl http://127.0.0.1:9004/status/<task_id>
+curl -o result.mp4 http://127.0.0.1:9004/download/<task_id>
 ```
 
-三个 prompt 文件参数必须同时提供。`--background` 必须提供；主体图
-`--subject-1` 到 `--subject-4` 均为可选参数，可以提供零到四张。
+服务请求中的 `background` 和 `output_dir` 必填；`image_1` 到 `image_4` 可提供
+零到四张。`resolution` 默认 `720x1280`，`fps` 默认 `24`，
+`ic_lora_guide_strength` 和可省略的 `cfg_guide` 默认都是 `1`。
+`output_dir` 指服务端目录，完成状态中的 `saved_output_path` 是最终保存路径。
 
 配套 `mx-services/ltx_msr` 支持双卡常驻 Runtime：Gemma 与文本连接器放在一张
 卡，LTX 22B、LoRA 和两个 VAE 放在另一张卡。常驻 Worker 直接复用

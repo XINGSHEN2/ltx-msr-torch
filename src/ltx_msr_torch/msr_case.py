@@ -33,7 +33,7 @@ from .text_conditioning import (
 )
 from .text_projection import build_text_projection_from_checkpoint
 from .torch_nodes import empty_ltxv_latent_audio
-from .video_io import write_av_mp4
+from .video_io import decoded_video_to_frames, write_av_mp4
 from .workflow_extract import extract_workflow_config
 
 
@@ -233,10 +233,12 @@ def generate_msr_case(
         text_device = device
         tokenizer = GemmaTokenizer.from_config_paths()
     case_dir = Path(args.case_dir)
-    width = int(args.width) if args.width is not None else int(config.latent.width)
-    height = int(args.height) if args.height is not None else int(config.latent.height)
+    width, height = _requested_dimensions(args, config)
     reference_frames = int(args.reference_frames) if args.reference_frames is not None else int(config.reference.frame_count)
     video_frames = int(args.video_frames) if args.video_frames is not None else int(config.latent.video_frames)
+    frame_rate = _requested_frame_rate(args, config)
+    ic_lora_guide_strength = _requested_ic_lora_guide_strength(args, config)
+    cfg_guide = _requested_cfg_guide(args, config)
     if width < 32 or height < 32:
         raise ValueError("width and height must be at least 32")
     reference_width = int(args.reference_width) if args.reference_width is not None else int(config.reference.width)
@@ -245,11 +247,17 @@ def generate_msr_case(
         raise ValueError("reference-width and reference-height must be positive")
     if reference_frames <= 0 or video_frames <= 0:
         raise ValueError("reference-frames and video-frames must be positive")
+    if frame_rate <= 0:
+        raise ValueError("fps must be positive")
+    if ic_lora_guide_strength < 0:
+        raise ValueError("ic-lora-guide-strength must be non-negative")
+    if cfg_guide < 0:
+        raise ValueError("cfg-guide must be non-negative")
 
     sigmas = _limited_sigmas(state.sigmas, args.max_sigmas).to(device=device)
-    latent_frames = ((video_frames - 1) // 8) + 1
-    latent_height = height // 32
-    latent_width = width // 32
+    latent_frames = _ceil_div(video_frames - 1, 8) + 1
+    latent_height = _ceil_div(height, 32)
+    latent_width = _ceil_div(width, 32)
 
     prompt_path = Path(args.prompt_file) if args.prompt_file is not None else None
     workflow_reference_inputs = _resolve_workflow_licon_images(workflow_path, case_dir)
@@ -456,7 +464,7 @@ def generate_msr_case(
         latent=target_latent,
         image=reference,
         frame_idx=config.ic_lora_guide.frame_idx,
-        strength=config.ic_lora_guide.strength,
+        strength=ic_lora_guide_strength,
         latent_downscale_factor=state.ic_lora.latent_downscale_factor,
         crop=config.ic_lora_guide.crop,
     )
@@ -465,7 +473,7 @@ def generate_msr_case(
 
     audio_latent = empty_ltxv_latent_audio(
         frames_number=video_frames,
-        frame_rate=int(config.latent.frame_rate),
+        frame_rate=frame_rate,
         batch_size=int(config.latent.batch_size),
         audio_vae=decoders.audio_vae,
         device=device,
@@ -544,7 +552,7 @@ def generate_msr_case(
         "negative_raw_conditioning": negative_encoded.conditioning.to(device=device),
         "attention_mask": context_output.attention_mask.to(device=device) if context_output.attention_mask is not None else None,
         "sigmas": sigmas,
-        "frame_rate": float(config.latent.frame_rate),
+        "frame_rate": float(frame_rate),
         "transformer_options": transformer_options,
         "keyframe_idxs": keyframe_idxs.to(device=device) if isinstance(keyframe_idxs, torch.Tensor) else None,
         "denoise_mask": denoise_mask,
@@ -558,7 +566,7 @@ def generate_msr_case(
             negative_attention_mask=negative_context_output.attention_mask.to(device=device)
             if negative_context_output.attention_mask is not None
             else None,
-            cfg=float(config.sampling.cfg),
+            cfg=cfg_guide,
             dump_path=getattr(args, "debug_first_step_dump", None),
         )
         return 0
@@ -576,7 +584,7 @@ def generate_msr_case(
             negative_attention_mask=negative_context_output.attention_mask.to(device=device)
             if negative_context_output.attention_mask is not None
             else None,
-            cfg=float(config.sampling.cfg),
+            cfg=cfg_guide,
         )
     crop_guides_removed = max(int(sampled_video_latents.shape[2]) - latent_frames, 0)
     sampled_video = sampled_video_latents[:, :, :latent_frames]
@@ -586,11 +594,18 @@ def generate_msr_case(
         audio_vae=decoders.audio_vae,
         audio_latents=sampled_audio_latents,
     )
-    output_path = write_av_mp4(
+    output_video_frames = _crop_decoded_video(
         decoded.video,
+        frame_count=video_frames,
+        width=width,
+        height=height,
+    )
+    requested_output_path = _requested_output_path(args)
+    output_path = write_av_mp4(
+        output_video_frames,
         decoded.audio,
-        args.output_video,
-        fps=float(config.latent.frame_rate),
+        requested_output_path,
+        fps=float(frame_rate),
         sample_rate=int(getattr(decoders.audio_vae, "output_sample_rate", 48000)),
     )
 
@@ -608,12 +623,14 @@ def generate_msr_case(
     print(f"msr_case_reference_width={reference_width}")
     print(f"msr_case_reference_height={reference_height}")
     print(f"msr_case_video_frames={video_frames}")
+    print(f"msr_case_fps={frame_rate}")
     print(f"msr_case_reference_frames={reference_frames}")
     print(f"msr_case_seed={seed}")
     print(f"msr_case_sampler_path={args.sampler_impl}")
     print("msr_case_transformer_options=cond_or_uncond,sigmas,sample_sigmas")
     print(f"msr_case_workflow_sampler={config.sampling.sampler}")
     print(f"msr_case_workflow_cfg={config.sampling.cfg}")
+    print(f"msr_case_cfg_guide={cfg_guide}")
     print(f"msr_case_latent_shape={tuple(video_samples.shape)}")
     print(f"msr_case_target_latent_frames={latent_frames}")
     print(f"msr_case_crop_guides_removed={crop_guides_removed}")
@@ -635,6 +652,7 @@ def generate_msr_case(
     print(f"msr_case_lora_applied={not args.no_apply_lora}")
     print(f"msr_case_lora_name={lora_name}")
     print(f"msr_case_lora_strength={lora_strength}")
+    print(f"msr_case_ic_lora_guide_strength={ic_lora_guide_strength}")
     print(f"msr_case_nag_enabled={not bool(getattr(args, 'disable_nag', False))}")
     print(f"msr_case_nag_scale={config.nag.scale if not bool(getattr(args, 'disable_nag', False)) else 0.0}")
     print(f"msr_case_nag_alpha={config.nag.alpha if not bool(getattr(args, 'disable_nag', False)) else 0.0}")
@@ -647,8 +665,87 @@ def generate_msr_case(
     print(f"msr_case_sampled_video_finite={bool(torch.isfinite(sampled_video_latents).all().item())}")
     print(f"msr_case_sampled_audio_finite={bool(torch.isfinite(sampled_audio_latents).all().item())}")
     print(f"msr_case_decoded_video_shape={tuple(decoded.video.shape)}")
+    print(f"msr_case_output_video_shape={tuple(output_video_frames.shape)}")
     print(f"msr_case_decoded_audio_shape={tuple(decoded.audio.shape) if decoded.audio is not None else None}")
     return 0
+
+
+def _ceil_div(value: int, divisor: int) -> int:
+    return -(-int(value) // int(divisor))
+
+
+def _crop_decoded_video(
+    video: Any,
+    *,
+    frame_count: int,
+    width: int,
+    height: int,
+):
+    frames = decoded_video_to_frames(video)
+    decoded_frames, decoded_height, decoded_width = (int(value) for value in frames.shape[:3])
+    if decoded_frames < frame_count or decoded_height < height or decoded_width < width:
+        raise ValueError(
+            "decoded video is smaller than the requested output: "
+            f"decoded={decoded_width}x{decoded_height}/{decoded_frames} frames, "
+            f"requested={width}x{height}/{frame_count} frames"
+        )
+    top = (decoded_height - height) // 2
+    left = (decoded_width - width) // 2
+    return frames[:frame_count, top : top + height, left : left + width, :]
+
+
+def _parse_resolution(value: str) -> tuple[int, int]:
+    normalized = value.strip().lower().replace("×", "x").replace("*", "x")
+    parts = [part.strip() for part in normalized.split("x")]
+    if len(parts) != 2:
+        raise ValueError("resolution must use WIDTHxHEIGHT, for example 720x1280")
+    try:
+        width, height = (int(part) for part in parts)
+    except ValueError as exc:
+        raise ValueError(
+            "resolution must use integer WIDTHxHEIGHT, for example 720x1280"
+        ) from exc
+    return width, height
+
+
+def _requested_dimensions(args: argparse.Namespace, config: Any) -> tuple[int, int]:
+    resolution = getattr(args, "resolution", None)
+    if resolution is None:
+        width = int(config.latent.width)
+        height = int(config.latent.height)
+    else:
+        width, height = _parse_resolution(str(resolution))
+    requested_width = getattr(args, "width", None)
+    requested_height = getattr(args, "height", None)
+    if requested_width is not None:
+        width = int(requested_width)
+    if requested_height is not None:
+        height = int(requested_height)
+    return width, height
+
+
+def _requested_frame_rate(args: argparse.Namespace, config: Any) -> int:
+    requested = getattr(args, "frame_rate", None)
+    return int(config.latent.frame_rate if requested is None else requested)
+
+
+def _requested_ic_lora_guide_strength(args: argparse.Namespace, config: Any) -> float:
+    requested = getattr(args, "ic_lora_guide_strength", None)
+    return float(config.ic_lora_guide.strength if requested is None else requested)
+
+
+def _requested_cfg_guide(args: argparse.Namespace, config: Any) -> float:
+    requested = getattr(args, "cfg_guide", None)
+    return float(config.sampling.cfg if requested is None else requested)
+
+
+def _requested_output_path(args: argparse.Namespace) -> str:
+    output_video = getattr(args, "output_video", None)
+    output_dir = getattr(args, "output_dir", None)
+    if output_dir is not None:
+        filename = Path(output_video).name if output_video else "output_video.mp4"
+        return str(Path(output_dir).expanduser() / filename)
+    return str(output_video or "outputs/msr_case_01_torch.mp4")
 
 
 def _requested_lora_settings(args: argparse.Namespace, config: Any) -> tuple[str, float]:
