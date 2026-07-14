@@ -183,11 +183,28 @@ python -m ltx_msr_torch \
 ```bash
 bash scripts/submit_validation_v1_service.sh \
   --server http://127.0.0.1:9004 \
+  --background sample_cases/validition_v1_01/bg.png \
+  --subject-1 sample_cases/validition_v1_01/2.jpg \
+  --subject-2 sample_cases/validition_v1_01/1.jpg \
   --output-dir /path/to/output
 ```
 
 脚本读取工作流内置的 global/local prompt，保持原始 PromptRelay、尺寸、帧数、
 seed、negative prompt 和完整采样配置，并在任务完成后下载 MP4。
+
+也可以通过三个 UTF-8 文本文件传入自定义 prompt，并指定输出目录：
+
+```bash
+bash scripts/submit_validation_v1_service.sh \
+  --global-prompt-file /path/to/global.txt \
+  --local-prompt-file /path/to/local.txt \
+  --negative-prompt-file /path/to/negative.txt \
+  --background /path/to/background.png \
+  --output-dir /path/to/output
+```
+
+三个 prompt 文件参数必须同时提供。`--background` 必须提供；主体图
+`--subject-1` 到 `--subject-4` 均为可选参数，可以提供零到四张。
 
 配套 `mx-services/ltx_msr` 支持双卡常驻 Runtime：Gemma 与文本连接器放在一张
 卡，LTX 22B、LoRA 和两个 VAE 放在另一张卡。常驻 Worker 直接复用

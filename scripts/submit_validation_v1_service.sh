@@ -8,31 +8,88 @@ SERVER="${SERVER:-http://127.0.0.1:9004}"
 PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/outputs}"
 POLL_INTERVAL="${POLL_INTERVAL:-5}"
+GLOBAL_PROMPT_FILE="${GLOBAL_PROMPT_FILE:-}"
+LOCAL_PROMPT_FILE="${LOCAL_PROMPT_FILE:-}"
+NEGATIVE_PROMPT_FILE="${NEGATIVE_PROMPT_FILE:-}"
+SUBJECT_1="${SUBJECT_1:-}"
+SUBJECT_2="${SUBJECT_2:-}"
+SUBJECT_3="${SUBJECT_3:-}"
+SUBJECT_4="${SUBJECT_4:-}"
+BACKGROUND="${BACKGROUND:-}"
 
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
-Submit the bundled validation_v1/01 case to the standalone LTX MSR service,
-wait for completion, and download the generated MP4.
+Submit an MSR case to the standalone LTX service, wait for completion, and
+download the generated MP4. Prompt file options must be supplied together.
 
 Options:
-  --output-dir DIR      Video output directory (default: ${PROJECT_ROOT}/outputs)
-  --server URL          Service URL (default: http://127.0.0.1:9004)
-  --python PATH         Python used to read JSON (default: /usr/bin/python3)
-  --poll-interval SEC   Status polling interval (default: 5)
-  -h, --help            Show this help
+  --global-prompt-file PATH    UTF-8 global prompt text file
+  --local-prompt-file PATH     UTF-8 local prompt text file
+  --negative-prompt-file PATH  UTF-8 negative prompt text file
+  --output-dir DIR             Video output directory (default: ${PROJECT_ROOT}/outputs)
+  --background PATH            Required background image
+  --subject-1 PATH             Optional first subject image
+  --subject-2 PATH             Optional second subject image
+  --subject-3 PATH             Optional third subject image
+  --subject-4 PATH             Optional fourth subject image
+  --server URL                 Service URL (default: http://127.0.0.1:9004)
+  --python PATH                Python used to read JSON (default: /usr/bin/python3)
+  --poll-interval SEC          Status polling interval (default: 5)
+  -h, --help                   Show this help
 
-The same values can be set with OUTPUT_DIR, SERVER, PYTHON_BIN, and
-POLL_INTERVAL environment variables.
+Options can also be supplied with their uppercase environment variables, for
+example GLOBAL_PROMPT_FILE, LOCAL_PROMPT_FILE, NEGATIVE_PROMPT_FILE, OUTPUT_DIR,
+SUBJECT_1, BACKGROUND, SERVER, PYTHON_BIN, and POLL_INTERVAL.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --global-prompt-file)
+            [[ $# -ge 2 ]] || { echo "--global-prompt-file requires a value" >&2; exit 2; }
+            GLOBAL_PROMPT_FILE="$2"
+            shift 2
+            ;;
+        --local-prompt-file)
+            [[ $# -ge 2 ]] || { echo "--local-prompt-file requires a value" >&2; exit 2; }
+            LOCAL_PROMPT_FILE="$2"
+            shift 2
+            ;;
+        --negative-prompt-file)
+            [[ $# -ge 2 ]] || { echo "--negative-prompt-file requires a value" >&2; exit 2; }
+            NEGATIVE_PROMPT_FILE="$2"
+            shift 2
+            ;;
         --output-dir)
             [[ $# -ge 2 ]] || { echo "--output-dir requires a value" >&2; exit 2; }
             OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --subject-1)
+            [[ $# -ge 2 ]] || { echo "--subject-1 requires a value" >&2; exit 2; }
+            SUBJECT_1="$2"
+            shift 2
+            ;;
+        --subject-2)
+            [[ $# -ge 2 ]] || { echo "--subject-2 requires a value" >&2; exit 2; }
+            SUBJECT_2="$2"
+            shift 2
+            ;;
+        --subject-3)
+            [[ $# -ge 2 ]] || { echo "--subject-3 requires a value" >&2; exit 2; }
+            SUBJECT_3="$2"
+            shift 2
+            ;;
+        --subject-4)
+            [[ $# -ge 2 ]] || { echo "--subject-4 requires a value" >&2; exit 2; }
+            SUBJECT_4="$2"
+            shift 2
+            ;;
+        --background)
+            [[ $# -ge 2 ]] || { echo "--background requires a value" >&2; exit 2; }
+            BACKGROUND="$2"
             shift 2
             ;;
         --server)
@@ -67,17 +124,40 @@ command -v curl >/dev/null || { echo "curl was not found" >&2; exit 1; }
 SERVER="${SERVER%/}"
 
 WORKFLOW="${PROJECT_ROOT}/sample_cases/LTX-2.3_MSR_sample_workflow_V2.json"
-CASE_DIR="${PROJECT_ROOT}/sample_cases/validition_v1_01"
+[[ -n "${BACKGROUND}" ]] || { echo "--background is required" >&2; exit 2; }
+[[ -s "${BACKGROUND}" ]] || { echo "Background image is missing or empty: ${BACKGROUND}" >&2; exit 1; }
 
-for required_file in \
-    "${WORKFLOW}" \
-    "${CASE_DIR}/1.jpg" \
-    "${CASE_DIR}/2.jpg" \
-    "${CASE_DIR}/bg.png"; do
-    [[ -s "${required_file}" ]] || { echo "Required sample file is missing: ${required_file}" >&2; exit 1; }
+for optional_image in "${SUBJECT_1}" "${SUBJECT_2}" "${SUBJECT_3}" "${SUBJECT_4}"; do
+    if [[ -n "${optional_image}" && ! -s "${optional_image}" ]]; then
+        echo "Optional subject image is missing or empty: ${optional_image}" >&2
+        exit 1
+    fi
 done
 
-GLOBAL_PROMPT=$("${PYTHON_BIN}" -c '
+PROMPT_FILE_COUNT=0
+for prompt_file in "${GLOBAL_PROMPT_FILE}" "${LOCAL_PROMPT_FILE}" "${NEGATIVE_PROMPT_FILE}"; do
+    if [[ -n "${prompt_file}" ]]; then
+        PROMPT_FILE_COUNT=$((PROMPT_FILE_COUNT + 1))
+    fi
+done
+
+if [[ "${PROMPT_FILE_COUNT}" -ne 0 && "${PROMPT_FILE_COUNT}" -ne 3 ]]; then
+    echo "Provide all three prompt files together: global, local, and negative." >&2
+    exit 2
+fi
+
+if [[ "${PROMPT_FILE_COUNT}" -eq 3 ]]; then
+    for prompt_file in "${GLOBAL_PROMPT_FILE}" "${LOCAL_PROMPT_FILE}" "${NEGATIVE_PROMPT_FILE}"; do
+        [[ -f "${prompt_file}" ]] || { echo "Prompt file was not found: ${prompt_file}" >&2; exit 1; }
+    done
+    GLOBAL_PROMPT="$(<"${GLOBAL_PROMPT_FILE}")"
+    LOCAL_PROMPTS="$(<"${LOCAL_PROMPT_FILE}")"
+    NEGATIVE_PROMPT="$(<"${NEGATIVE_PROMPT_FILE}")"
+    [[ -n "${GLOBAL_PROMPT}" ]] || { echo "Global prompt file is empty" >&2; exit 1; }
+    [[ -n "${LOCAL_PROMPTS}" ]] || { echo "Local prompt file is empty" >&2; exit 1; }
+else
+    [[ -s "${WORKFLOW}" ]] || { echo "Bundled workflow is missing: ${WORKFLOW}" >&2; exit 1; }
+    GLOBAL_PROMPT=$("${PYTHON_BIN}" -c '
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as stream:
     workflow = json.load(stream)
@@ -85,7 +165,7 @@ node = next(item for item in workflow["nodes"] if item.get("type") == "PromptRel
 print(node["widgets_values"][0])
 ' "${WORKFLOW}")
 
-LOCAL_PROMPTS=$("${PYTHON_BIN}" -c '
+    LOCAL_PROMPTS=$("${PYTHON_BIN}" -c '
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as stream:
     workflow = json.load(stream)
@@ -93,18 +173,36 @@ node = next(item for item in workflow["nodes"] if item.get("type") == "PromptRel
 print(node["widgets_values"][1])
 ' "${WORKFLOW}")
 
+    NEGATIVE_PROMPT=$("${PYTHON_BIN}" -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    workflow = json.load(stream)
+node = next(item for item in workflow["nodes"] if item.get("type") == "CLIPTextEncode")
+print(node["widgets_values"][0])
+' "${WORKFLOW}")
+fi
+
 echo "Checking service: ${SERVER}/health"
 curl -fsS "${SERVER}/health"
 echo
 
-echo "Submitting validation_v1/01..."
-SUBMIT_RESPONSE=$(curl -fsS -X POST "${SERVER}/submit" \
-    -F 'pipeline_name=ltx_msr' \
-    --form-string "global_prompt=${GLOBAL_PROMPT}" \
-    --form-string "local_prompts=${LOCAL_PROMPTS}" \
-    -F "subject_1=@${CASE_DIR}/2.jpg" \
-    -F "subject_2=@${CASE_DIR}/1.jpg" \
-    -F "background=@${CASE_DIR}/bg.png")
+echo "Submitting LTX MSR task..."
+CURL_ARGS=(
+    -fsS -X POST "${SERVER}/submit"
+    -F 'pipeline_name=ltx_msr'
+    --form-string "global_prompt=${GLOBAL_PROMPT}"
+    --form-string "local_prompts=${LOCAL_PROMPTS}"
+    --form-string "negative_prompt=${NEGATIVE_PROMPT}"
+    -F "background=@${BACKGROUND}"
+)
+for subject_number in 1 2 3 4; do
+    subject_variable="SUBJECT_${subject_number}"
+    subject_path="${!subject_variable}"
+    if [[ -n "${subject_path}" ]]; then
+        CURL_ARGS+=(-F "subject_${subject_number}=@${subject_path}")
+    fi
+done
+SUBMIT_RESPONSE=$(curl "${CURL_ARGS[@]}")
 
 TASK_ID=$("${PYTHON_BIN}" -c '
 import json, sys
@@ -150,7 +248,7 @@ done
 
 mkdir -p "${OUTPUT_DIR}"
 OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"
-OUTPUT_PATH="${OUTPUT_DIR}/validation_v1_01_${TASK_ID}.mp4"
+OUTPUT_PATH="${OUTPUT_DIR}/ltx_msr_${TASK_ID}.mp4"
 TEMP_OUTPUT="${OUTPUT_PATH}.part"
 
 curl -fL -o "${TEMP_OUTPUT}" "${SERVER}/download/${TASK_ID}"

@@ -253,23 +253,21 @@ def generate_msr_case(
 
     prompt_path = Path(args.prompt_file) if args.prompt_file is not None else None
     workflow_reference_inputs = _resolve_workflow_licon_images(workflow_path, case_dir)
-    subject_1 = Path(args.subject_1) if args.subject_1 is not None else workflow_reference_inputs.get("1", case_dir / "1.jpg")
-    subject_2 = Path(args.subject_2) if args.subject_2 is not None else workflow_reference_inputs.get("2", case_dir / "2.jpg")
-    subject_3 = (
-        Path(args.subject_3)
-        if getattr(args, "subject_3", None) is not None
-        else workflow_reference_inputs.get("3")
-    )
-    subject_4 = (
-        Path(args.subject_4)
-        if getattr(args, "subject_4", None) is not None
-        else workflow_reference_inputs.get("4")
-    )
-    background = (
-        Path(args.background)
-        if args.background is not None
-        else workflow_reference_inputs.get("background", case_dir / "bg.png")
-    )
+    if args.background is not None:
+        # An explicit background defines a complete custom reference set. Keep
+        # omitted subject slots disconnected instead of filling them from the
+        # bundled workflow.
+        subject_1 = Path(args.subject_1) if args.subject_1 is not None else None
+        subject_2 = Path(args.subject_2) if args.subject_2 is not None else None
+        subject_3 = Path(args.subject_3) if getattr(args, "subject_3", None) is not None else None
+        subject_4 = Path(args.subject_4) if getattr(args, "subject_4", None) is not None else None
+        background = Path(args.background)
+    else:
+        subject_1 = workflow_reference_inputs.get("1", case_dir / "1.jpg")
+        subject_2 = workflow_reference_inputs.get("2", case_dir / "2.jpg")
+        subject_3 = workflow_reference_inputs.get("3")
+        subject_4 = workflow_reference_inputs.get("4")
+        background = workflow_reference_inputs.get("background", case_dir / "bg.png")
 
     full_prompt = getattr(args, "full_prompt", None)
     if full_prompt is not None:

@@ -196,12 +196,30 @@ service and download the result into a chosen directory:
 ```bash
 bash scripts/submit_validation_v1_service.sh \
   --server http://127.0.0.1:9004 \
+  --background sample_cases/validition_v1_01/bg.png \
+  --subject-1 sample_cases/validition_v1_01/2.jpg \
+  --subject-2 sample_cases/validition_v1_01/1.jpg \
   --output-dir /path/to/output
 ```
 
 The script reads the global/local prompts embedded in the workflow, preserves
 the original PromptRelay, dimensions, frame counts, seed, negative prompt, and
 full sampling settings, then downloads the MP4 after the task completes.
+
+Custom UTF-8 prompt files and an output directory can be supplied directly:
+
+```bash
+bash scripts/submit_validation_v1_service.sh \
+  --global-prompt-file /path/to/global.txt \
+  --local-prompt-file /path/to/local.txt \
+  --negative-prompt-file /path/to/negative.txt \
+  --background /path/to/background.png \
+  --output-dir /path/to/output
+```
+
+All three prompt file options must be provided together. `--background` is
+required. `--subject-1` through `--subject-4` are independently optional, so
+the request may include zero to four subject images.
 
 The companion `mx-services/ltx_msr` launcher supports a split-device resident
 runtime: Gemma and the text connectors stay on one device, while LTX 22B, the
